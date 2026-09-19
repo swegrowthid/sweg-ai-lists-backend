@@ -2,20 +2,41 @@ package user
 
 import (
 	"context"
-	"errors"
+	"database/sql"
+	"fmt"
 )
 
-// ErrPostgresUnwired marks the postgres store as not connected yet.
-// Wire a real *sql.DB here when migrations land. Until then, app uses memory.
-var ErrPostgresUnwired = errors.New("user: postgres store not wired")
+// PostgresStore reads users from Postgres via database/sql.
+type PostgresStore struct {
+	db *sql.DB
+}
 
-// PostgresStore is the future SQL implementation. Stub only.
-type PostgresStore struct{}
+// NewPostgresStore wires the pool. Nil pool is a programmer bug.
+func NewPostgresStore(db *sql.DB) *PostgresStore {
+	if db == nil {
+		panic("user: nil DB")
+	}
+	return &PostgresStore{db: db}
+}
 
-// NewPostgresStore builds the stub. Keep the constructor so wiring stays stable.
-func NewPostgresStore() *PostgresStore { return &PostgresStore{} }
+// List implements Store.
+func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("user: list query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
 
-// List implements Store. Always fails until SQL lands.
-func (*PostgresStore) List(context.Context) ([]User, error) {
-	return nil, ErrPostgresUnwired
+	users := []User{}
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+			return nil, fmt.Errorf("user: list scan: %w", err)
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("user: list rows: %w", err)
+	}
+	return users, nil
 }

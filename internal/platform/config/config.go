@@ -13,10 +13,13 @@ type Config struct {
 	Version  string
 	Service  string
 	LogLevel string
+	DBURL    string
 }
 
 // Load builds Config from environment with safe defaults.
+// It sources .env from the working dir first; real env always wins.
 func Load() Config {
+	loadDotEnv(".env")
 	addr := strings.TrimSpace(os.Getenv("APP_ADDR"))
 	if addr == "" {
 		addr = ":8080"
@@ -34,7 +37,8 @@ func Load() Config {
 		service = "sweg-ai-lists-backend"
 	}
 	level := strings.ToLower(strings.TrimSpace(os.Getenv("APP_LOG_LEVEL")))
-	return Config{Addr: addr, Env: env, Version: version, Service: service, LogLevel: level}
+	dbURL := strings.TrimSpace(os.Getenv("DB_URL"))
+	return Config{Addr: addr, Env: env, Version: version, Service: service, LogLevel: level, DBURL: dbURL}
 }
 
 // IsProd reports production mode for logger and handler behavior.

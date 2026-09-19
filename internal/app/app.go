@@ -23,12 +23,14 @@ type App struct {
 }
 
 // New builds App. Nil logger is a programmer bug, so fail fast.
-func New(cfg config.Config, log *slog.Logger, checker db.Pinger) *App {
+// checker feeds readiness; pool feeds PostgresStore. Nil pool falls back to memory.
+func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	if log == nil {
 		panic("app: nil logger")
 	}
-	if checker == nil {
-		checker = db.NoopPinger{}
+	var checker db.Pinger = db.NoopPinger{}
+	if pool != nil {
+		checker = pool
 	}
 
 	mux := http.NewServeMux()
@@ -36,8 +38,11 @@ func New(cfg config.Config, log *slog.Logger, checker db.Pinger) *App {
 	healthSvc := health.NewService(cfg.Version, checker)
 	health.NewHandler(healthSvc, log).RegisterRoutes(mux)
 
-	userStore := user.NewMemoryStore()
-	user.NewHandler(user.NewService(userStore), log).RegisterRoutes(mux)
+	var store user.Store = user.NewMemoryStore()
+	if pool != nil {
+		store = user.NewPostgresStore(pool.DB)
+	}
+	user.NewHandler(user.NewService(store), log).RegisterRoutes(mux)
 
 	a := &App{cfg: cfg, log: log, mux: mux}
 	a.server = httpserver.New(cfg.Addr, a.withLogging(mux))
