@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: sweg-ai-lists-backend
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      summary: Liveness - proses hidup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      summary: Readiness - siap terima trafik
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: Not ready (db down)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status, version, uptime_s]
+      properties:
+        status:
+          type: string
+          enum: [ok, fail]
+        version:
+          type: string
+        uptime_s:
+          type: integer
+        checks:
+          type: object
+          additionalProperties:
+            type: string
