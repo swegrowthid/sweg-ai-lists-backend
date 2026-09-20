@@ -19,9 +19,9 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-// List implements Store.
+// List implements Store. It never selects password_hash.
 func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM users ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, username, email, created_at, updated_at FROM users ORDER BY created_at, id`)
 	if err != nil {
 		return nil, fmt.Errorf("user: list query: %w", err)
 	}
@@ -30,7 +30,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
 	users := []User{}
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("user: list scan: %w", err)
 		}
 		users = append(users, u)

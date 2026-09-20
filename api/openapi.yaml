@@ -2,6 +2,10 @@ openapi: 3.0.3
 info:
   title: sweg-ai-lists-backend
   version: 0.1.0
+  description: Backend komunitas sweg-ai. Satu sumber kontrak API.
+servers:
+  - url: /
+    description: Same host - browser pakai host aktif, tanpa CORS tambahan.
 paths:
   /healthz:
     get:
@@ -29,6 +33,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /users:
+    get:
+      summary: List users
+      operationId: listUsers
+      tags: [users]
+      responses:
+        "200":
+          description: Daftar user tanpa password_hash
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "500":
+          description: Galat server
 components:
   schemas:
     Health:
@@ -46,3 +66,27 @@ components:
           type: object
           additionalProperties:
             type: string
+    User:
+      type: object
+      required: [id, username, email, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 9f28f61b-8177-4b63-82a2-ff2388680543
+        username:
+          type: string
+          example: budi
+        email:
+          type: string
+          format: email
+          example: budi@test.id
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+tags:
+  - name: users
+    description: Data user komunitas.

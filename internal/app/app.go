@@ -9,6 +9,7 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/health"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/config"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/db"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/docs"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/httpserver"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
 )
@@ -37,6 +38,9 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 
 	healthSvc := health.NewService(cfg.Version, checker)
 	health.NewHandler(healthSvc, log).RegisterRoutes(mux)
+
+	// Docs UI on in dev/staging, off in prod. Spec always serves.
+	docs.NewHandler(log).RegisterRoutes(mux, !cfg.IsProd())
 
 	var store user.Store = user.NewMemoryStore()
 	if pool != nil {
