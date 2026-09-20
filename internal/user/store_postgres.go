@@ -3,7 +3,10 @@ package user
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PostgresStore reads users from Postgres via database/sql.
@@ -17,6 +20,31 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 		panic("user: nil DB")
 	}
 	return &PostgresStore{db: db}
+}
+
+// Create implements Store with a parameterized insert.
+func (s *PostgresStore) Create(ctx context.Context, input CreateInput) (User, error) {
+	var created User
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO users (username, email, password_hash)
+		VALUES ($1, $2, $3)
+		RETURNING id, username, email, password_hash, created_at, updated_at
+	`, input.Username, input.Email, input.PasswordHash).Scan(
+		&created.ID,
+		&created.Username,
+		&created.Email,
+		&created.PasswordHash,
+		&created.CreatedAt,
+		&created.UpdatedAt,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return User{}, ErrConflict
+		}
+		return User{}, fmt.Errorf("user: create: %w", err)
+	}
+	return created, nil
 }
 
 // List implements Store. It never selects password_hash.

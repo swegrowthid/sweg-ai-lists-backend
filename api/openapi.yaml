@@ -33,6 +33,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /users/register:
+    post:
+      summary: Register user
+      operationId: registerUser
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User berhasil dibuat tanpa password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "409":
+          description: Username atau email sudah terdaftar
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /users:
     get:
       summary: List users
@@ -66,6 +98,26 @@ components:
           type: object
           additionalProperties:
             type: string
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 3
+          example: budi
+        email:
+          type: string
+          format: email
+          example: Budi@Test.ID
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 72
+          writeOnly: true
+          example: secret-password
     User:
       type: object
       required: [id, username, email, created_at, updated_at]
