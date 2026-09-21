@@ -25,6 +25,10 @@ var (
 
 	// ErrInvalidInput signals invalid registration data.
 	ErrInvalidInput = errors.New("user: invalid registration input")
+
+	// ErrInvalidCredentials signals a failed login. One error for every cause:
+	// unknown identifier and wrong password stay indistinguishable.
+	ErrInvalidCredentials = errors.New("user: invalid credentials")
 )
 
 // RegisterInput is the validated input for the registration use case.
@@ -32,6 +36,13 @@ type RegisterInput struct {
 	Username string
 	Email    string
 	Password string
+}
+
+// LoginInput is the validated input for the authenticate use case.
+// Identifier accepts a username or an email.
+type LoginInput struct {
+	Identifier string
+	Password   string
 }
 
 // CreateInput contains the trusted values persisted for a new user.

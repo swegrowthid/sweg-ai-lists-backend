@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -18,7 +19,12 @@ const (
 type Store interface {
 	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, input CreateInput) (User, error)
+	FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error)
 }
+
+// dummyHash keeps logins with an unknown identifier on the bcrypt path,
+// so response timing does not reveal whether the identifier exists.
+var dummyHash = []byte("$2a$10$Wquyws8wr.DTZ.NQXw8x/ut.RZXl4geTcsSaK3UcSUyXcV3oAArQG")
 
 // Service owns user use-cases. No HTTP, no SQL here.
 type Service struct {
@@ -61,4 +67,26 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (User, erro
 		return User{}, err
 	}
 	return created, nil
+}
+
+// Authenticate verifies the identifier (username or email) and password.
+// Both unknown user and wrong password return ErrInvalidCredentials.
+func (s *Service) Authenticate(ctx context.Context, input LoginInput) (User, error) {
+	identifier := strings.TrimSpace(input.Identifier)
+	if identifier == "" || input.Password == "" {
+		return User{}, ErrInvalidCredentials
+	}
+
+	u, err := s.store.FindByUsernameOrEmail(ctx, identifier)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(input.Password))
+			return User{}, ErrInvalidCredentials
+		}
+		return User{}, err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.Password)); err != nil {
+		return User{}, ErrInvalidCredentials
+	}
+	return u, nil
 }

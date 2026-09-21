@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds process-level settings.
@@ -14,6 +15,10 @@ type Config struct {
 	Service  string
 	LogLevel string
 	DBURL    string
+
+	JWTSecret     string
+	JWTAccessTTL  time.Duration
+	JWTRefreshTTL time.Duration
 }
 
 // Load builds Config from environment with safe defaults.
@@ -38,7 +43,30 @@ func Load() Config {
 	}
 	level := strings.ToLower(strings.TrimSpace(os.Getenv("APP_LOG_LEVEL")))
 	dbURL := strings.TrimSpace(os.Getenv("DB_URL"))
-	return Config{Addr: addr, Env: env, Version: version, Service: service, LogLevel: level, DBURL: dbURL}
+	return Config{
+		Addr:          addr,
+		Env:           env,
+		Version:       version,
+		Service:       service,
+		LogLevel:      level,
+		DBURL:         dbURL,
+		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
+		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTRefreshTTL: durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
+	}
+}
+
+// durationEnv reads a Go duration from env, falling back on empty or invalid.
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 // IsProd reports production mode for logger and handler behavior.

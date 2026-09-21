@@ -26,8 +26,12 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 }
 
 // RegisterRoutes mounts user endpoints on a stdlib mux.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /users", h.list)
+// protect wraps authenticated routes; nil means no protection.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) http.Handler) {
+	if protect == nil {
+		protect = func(next http.Handler) http.Handler { return next }
+	}
+	mux.Handle("GET /users", protect(http.HandlerFunc(h.list)))
 	mux.HandleFunc("POST /users/register", h.register)
 }
 

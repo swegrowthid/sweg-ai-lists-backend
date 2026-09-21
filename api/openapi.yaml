@@ -70,6 +70,8 @@ paths:
       summary: List users
       operationId: listUsers
       tags: [users]
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Daftar user tanpa password_hash
@@ -79,9 +81,112 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/User"
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /auth/login:
+    post:
+      summary: Login - identifier terima username atau email
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login berhasil, access + refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Identifier atau password salah (pesan generik)
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /auth/refresh:
+    post:
+      summary: Rotasi refresh token - token lama langsung mati
+      operationId: refreshTokens
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Token pair baru
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Refresh token tidak valid, kadaluarsa, atau sudah dipakai
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /auth/logout:
+    post:
+      summary: Logout - cabut refresh token
+      operationId: logout
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Refresh token dicabut
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Refresh token tidak valid atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
         "500":
           description: Galat server
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     Health:
       type: object
@@ -98,6 +203,49 @@ components:
           type: object
           additionalProperties:
             type: string
+    LoginRequest:
+      type: object
+      required: [identifier, password]
+      additionalProperties: false
+      properties:
+        identifier:
+          type: string
+          description: Username atau email
+          example: budi
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          example: secret-password
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+    TokenPair:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]
+      properties:
+        access_token:
+          type: string
+          description: JWT HS256, kirim sebagai Authorization Bearer
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Umur access token dalam detik
+          example: 900
+        refresh_token:
+          type: string
+          description: JWT HS256 satu kali pakai, rotasi di /auth/refresh
+        refresh_expires_in:
+          type: integer
+          description: Umur refresh token dalam detik
+          example: 604800
     RegisterRequest:
       type: object
       required: [username, email, password]
@@ -142,3 +290,5 @@ components:
 tags:
   - name: users
     description: Data user komunitas.
+  - name: auth
+    description: Login, refresh, dan logout token.

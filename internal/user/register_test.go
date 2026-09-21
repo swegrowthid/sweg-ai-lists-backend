@@ -61,7 +61,7 @@ func TestRegisterRejectsDuplicateUsernameOrEmail(t *testing.T) {
 func TestRegisterHandlerDoesNotExposePassword(t *testing.T) {
 	handler := NewHandler(NewService(NewMemoryStore()), nil)
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(mux, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/users/register", strings.NewReader(`{"username":"budi","email":"BUDI@Example.COM","password":"password"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -89,7 +89,7 @@ func TestRegisterHandlerDoesNotExposePassword(t *testing.T) {
 func TestRegisterHandlerReturnsGenericDuplicateMessage(t *testing.T) {
 	handler := NewHandler(NewService(NewMemoryStore()), nil)
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(mux, nil)
 
 	register := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/users/register", strings.NewReader(body))

@@ -47,6 +47,31 @@ func (s *PostgresStore) Create(ctx context.Context, input CreateInput) (User, er
 	return created, nil
 }
 
+// FindByUsernameOrEmail implements Store. Username matches exactly,
+// email matches lowercase-folded (emails are stored lowercase).
+func (s *PostgresStore) FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE username = $1 OR email = lower($2)
+	`, identifier, identifier).Scan(
+		&u.ID,
+		&u.Username,
+		&u.Email,
+		&u.PasswordHash,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("user: find by identifier: %w", err)
+	}
+	return u, nil
+}
+
 // List implements Store. It never selects password_hash.
 func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, username, email, created_at, updated_at FROM users ORDER BY created_at, id`)

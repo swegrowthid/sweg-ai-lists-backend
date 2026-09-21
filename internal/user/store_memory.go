@@ -63,6 +63,19 @@ func newUUID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
 
+// FindByUsernameOrEmail implements Store. Username matches exactly,
+// email case-insensitive, mirroring the Postgres store.
+func (m *MemoryStore) FindByUsernameOrEmail(_ context.Context, identifier string) (User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if u.Username == identifier || strings.EqualFold(u.Email, identifier) {
+			return u, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
 // List implements Store. Returns a copy so callers cannot mutate state.
 func (m *MemoryStore) List(_ context.Context) ([]User, error) {
 	m.mu.RLock()
