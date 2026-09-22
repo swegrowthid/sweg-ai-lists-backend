@@ -1,0 +1,137 @@
+---
+# yamllint disable-line rule:truthy
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      # v5.1.0
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      # v5.6.0
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: make vet
+
+      - name: Test
+        run: make test
+
+      - name: Build linux binaries
+        run: make build-linux
+
+      # v4.6.2
+      - name: Upload binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: binaries
+          path: dist/
+
+  deploy:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency: deploy-production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+    steps:
+      # v5.1.0
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      # v4.3.0
+      - name: Download binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: binaries
+          path: dist
+
+      - name: Resolve settings
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -eu
+          test -n "$DEPLOY_HOST" || { echo "no DEPLOY_HOST"; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "no DEPLOY_USER"; exit 1; }
+          test -n "$DEPLOY_SSH_KEY" || { echo "no KEY"; exit 1; }
+          echo "DEPLOY_PORT=${DEPLOY_PORT:-22}" >> "$GITHUB_ENV"
+          echo "DEPLOY_PATH=${DEPLOY_PATH:-/opt/sweg-ai}" >> "$GITHUB_ENV"
+
+      - name: Prepare SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -eu
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" \
+            >> ~/.ssh/known_hosts 2>/dev/null
+          {
+            echo "Host deploy"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  Port $DEPLOY_PORT"
+            echo "  IdentityFile ~/.ssh/id_ed25519"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+          } >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Stamp release
+        run: |
+          set -eu
+          printf 'APP_VERSION=%s\n' "$GITHUB_SHA" > dist/release.env
+
+      - name: Sync release files
+        run: |
+          set -eu
+          rsync -az --delete -e ssh \
+            dist/bin/ "deploy:$DEPLOY_PATH/bin/"
+          rsync -az -e ssh \
+            dist/release.env "deploy:$DEPLOY_PATH/release.env"
+          rsync -az --delete -e ssh \
+            migrations/ "deploy:$DEPLOY_PATH/migrations/"
+
+      - name: Migrate
+        run: |
+          set -eu
+          ssh deploy \
+            "sudo /usr/bin/systemctl start sweg-ai-migrate.service"
+
+      - name: Restart API
+        run: |
+          set -eu
+          ssh deploy \
+            "sudo /usr/bin/systemctl restart sweg-ai.service"
+
+      - name: Health check
+        run: |
+          set -eu
+          ssh deploy '
+            for i in $(seq 1 15); do
+              curl -fsS http://127.0.0.1:8080/readyz && exit 0
+              sleep 1
+            done
+            echo "readiness check failed"
+            exit 1
+          '

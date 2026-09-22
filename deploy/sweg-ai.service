@@ -1,0 +1,32 @@
+[Unit]
+Description=sweg-ai lists backend API
+Documentation=https://github.com/swegrowthid/sweg-ai-lists-backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sweg-ai
+Group=sweg-ai
+WorkingDirectory=/opt/sweg-ai
+EnvironmentFile=/etc/sweg-ai/env
+EnvironmentFile=-/opt/sweg-ai/release.env
+ExecStart=/opt/sweg-ai/bin/api
+Restart=on-failure
+RestartSec=2
+
+# Hardening: the API needs the network only. No filesystem writes.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

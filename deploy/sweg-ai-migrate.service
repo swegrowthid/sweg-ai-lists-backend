@@ -1,0 +1,26 @@
+[Unit]
+Description=sweg-ai lists backend database migrations (goose up)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sweg-ai
+Group=sweg-ai
+WorkingDirectory=/opt/sweg-ai
+EnvironmentFile=/etc/sweg-ai/env
+EnvironmentFile=-/opt/sweg-ai/release.env
+ExecStart=/opt/sweg-ai/bin/migrate up
+
+# Hardening: same as the API unit. The binary only talks to Postgres.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true

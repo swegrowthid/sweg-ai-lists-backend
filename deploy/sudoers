@@ -1,0 +1,5 @@
+# /etc/sudoers.d/deploy-sweg-ai
+# Give the deploy SSH user only these two commands. No shell, no restart of other units.
+# Replace "deploy" with the value of the DEPLOY_USER secret.
+# Install: visudo -cf deploy-sudoers && install -m 440 deploy-sudoers /etc/sudoers.d/deploy-sweg-ai
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start sweg-ai-migrate.service, /usr/bin/systemctl restart sweg-ai.service
