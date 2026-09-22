@@ -31,6 +31,7 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
 3. Tulis `/etc/sweg-ai/env` dengan mode 600 milik root. Isi lihat
    `.env-example`: `DB_URL`, `JWT_SECRET`, `JWT_ACCESS_TTL`,
    `JWT_REFRESH_TTL`. Tambah `APP_ENV=prod` dan `APP_ADDR=:8080`.
+   Set `DOCS_UI=1` bila UI Scalar di `/docs` mau hidup di prod.
 
 4. Pasang unit service:
 

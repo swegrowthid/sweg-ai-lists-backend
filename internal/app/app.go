@@ -40,8 +40,8 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	healthSvc := health.NewService(cfg.Version, checker)
 	health.NewHandler(healthSvc, log).RegisterRoutes(mux)
 
-	// Docs UI on in dev/staging, off in prod. Spec always serves.
-	docs.NewHandler(log).RegisterRoutes(mux, !cfg.IsProd())
+	// Docs UI behind DOCS_UI; default on outside prod. Spec always serves.
+	docs.NewHandler(log).RegisterRoutes(mux, cfg.DocsUI)
 
 	var store user.Store = user.NewMemoryStore()
 	var refreshStore auth.RefreshStore = auth.NewMemoryRefreshStore()

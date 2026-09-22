@@ -15,6 +15,7 @@ type Config struct {
 	Service  string
 	LogLevel string
 	DBURL    string
+	DocsUI   bool
 
 	JWTSecret     string
 	JWTAccessTTL  time.Duration
@@ -50,6 +51,7 @@ func Load() Config {
 		Service:       service,
 		LogLevel:      level,
 		DBURL:         dbURL,
+		DocsUI:        boolEnv("DOCS_UI", env != "prod"),
 		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 15*time.Minute),
 		JWTRefreshTTL: durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
@@ -67,6 +69,17 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// boolEnv reads a boolean from env, falling back on empty or invalid.
+func boolEnv(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	}
+	return fallback
 }
 
 // IsProd reports production mode for logger and handler behavior.

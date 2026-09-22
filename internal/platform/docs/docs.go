@@ -22,7 +22,7 @@ func NewHandler(log *slog.Logger) *Handler {
 }
 
 // RegisterRoutes mounts the docs UI and the raw spec on a stdlib mux.
-// In prod the UI stays off: the spec still serves for tooling.
+// enableUI gates the Scalar shell; the spec always serves for tooling.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, enableUI bool) {
 	if enableUI {
 		mux.HandleFunc("GET /docs", h.ui)
