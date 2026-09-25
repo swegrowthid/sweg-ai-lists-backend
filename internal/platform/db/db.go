@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // Pinger is anything readiness can ping. Stores adapt to it.
@@ -38,10 +39,17 @@ func Open(ctx context.Context, dsn string) (*Pool, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, errors.New("db: DB_URL is empty")
 	}
-	raw, err := sql.Open("pgx", dsn)
+	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("db: open pool: %w", err)
+		return nil, fmt.Errorf("db: parse DSN: %w", err)
 	}
+	// Pooler-safe exec mode. A transaction pooler (Supabase port 6543) reuses
+	// backend sessions across clients, so a named prepared statement left on a
+	// session makes the next client's prepare fail with 42P05. CacheDescribe
+	// keeps the extended protocol and the client-side description cache, but
+	// sends the statement unnamed.
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	raw := stdlib.OpenDB(*cfg)
 	raw.SetMaxOpenConns(10)
 	raw.SetMaxIdleConns(5)
 	raw.SetConnMaxLifetime(30 * time.Minute)

@@ -89,6 +89,164 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /categories:
+    get:
+      summary: Daftar category
+      operationId: listCategories
+      tags: [categories]
+      responses:
+        "200":
+          description: Daftar semua category
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+        "500":
+          description: Galat server
+    post:
+      summary: Buat category
+      operationId: createCategory
+      tags: [categories]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: Category berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
+        "409":
+          description: Slug sudah dipakai
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /posts:
+    get:
+      summary: Daftar post
+      operationId: listPosts
+      tags: [posts]
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: Filter slug category.
+          schema:
+            type: string
+          example: coding-agent
+        - name: q
+          in: query
+          required: false
+          description: Cari pada judul, case-insensitive.
+          schema:
+            type: string
+          example: claude
+      responses:
+        "200":
+          description: Daftar post terbaru dulu, tanpa items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "400":
+          description: Filter tidak valid, misalnya category atau q memuat byte NUL
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+    post:
+      summary: Buat post
+      operationId: createPost
+      tags: [posts]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostRequest"
+      responses:
+        "201":
+          description: Post berhasil dibuat langsung published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          description: Request tidak valid atau category tidak dikenal
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa; atau user pembuat token sudah tidak ada
+          content:
+            text/plain:
+              schema:
+                type: string
+        "409":
+          description: Slug sudah dipakai
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /posts/{slug}:
+    get:
+      summary: Detail post
+      operationId: getPost
+      tags: [posts]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Slug post.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Post dengan items urut position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "404":
+          description: Post tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /auth/login:
     post:
       summary: Login - identifier terima username atau email
@@ -287,8 +445,153 @@ components:
         updated_at:
           type: string
           format: date-time
+    Category:
+      type: object
+      required: [id, slug, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: coding-agent
+        name:
+          type: string
+          example: Coding Agent
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateCategoryRequest:
+      type: object
+      required: [slug, name]
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+          maxLength: 100
+          description: Huruf kecil, angka, dan tanda hubung. Unik.
+          example: coding-agent
+        name:
+          type: string
+          maxLength: 100
+          example: Coding Agent
+    PostItem:
+      type: object
+      required: [id, kind, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [markdown, text, link, file]
+        position:
+          type: integer
+          minimum: 0
+          description: Urutan tampil. Server mengisi dari urutan array items.
+        body_text:
+          type: string
+          description: "Isi markdown, text, atau file kecil inline. Jangan dikirim pada kind link. Maksimal 64 KiB."
+        url:
+          type: string
+          format: uri
+          description: "Wajib dan hanya untuk kind link. Harus http atau https."
+        filename:
+          type: string
+          description: "Wajib dan hanya untuk kind file."
+        mime:
+          type: string
+          description: "Hanya untuk kind file. Default text/markdown."
+    Post:
+      type: object
+      required: [id, slug, title, author_id, categories, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          example: setup-claude-code
+        title:
+          type: string
+          example: Setup Claude Code
+        author_id:
+          type: string
+          format: uuid
+          description: User pembuat post.
+        categories:
+          type: array
+          description: Minimal satu.
+          items:
+            $ref: "#/components/schemas/Category"
+        items:
+          type: array
+          description: "Terisi pada POST /posts dan GET /posts/{slug}, urut menurut position. Kosong pada daftar."
+          items:
+            $ref: "#/components/schemas/PostItem"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreatePostRequest:
+      type: object
+      required: [slug, title, categories, items]
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+          maxLength: 100
+          description: Huruf kecil, angka, dan tanda hubung. Unik.
+          example: setup-claude-code
+        title:
+          type: string
+          maxLength: 200
+          example: Setup Claude Code
+        categories:
+          type: array
+          minItems: 1
+          maxItems: 8
+          description: Daftar slug category yang sudah ada.
+          example: [coding-agent]
+          items:
+            type: string
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: "Urutan array menjadi urutan tampil. Kirim hanya field milik kind: field lain ditolak walau kosong. Body maksimal 1 MiB."
+          items:
+            type: object
+            required: [kind]
+            additionalProperties: false
+            properties:
+              kind:
+                type: string
+                enum: [markdown, text, link, file]
+              body_text:
+                type: string
+                description: "Wajib untuk kind markdown, text, dan file. Maksimal 64 KiB."
+              url:
+                type: string
+                format: uri
+                description: "Wajib untuk kind link. Harus http atau https."
+              filename:
+                type: string
+                description: "Wajib untuk kind file."
+              mime:
+                type: string
+                description: "Opsional untuk kind file. Default text/markdown."
 tags:
   - name: users
     description: Data user komunitas.
   - name: auth
     description: Login, refresh, dan logout token.
+  - name: categories
+    description: Kategori post, mis. coding agent.
+  - name: posts
+    description: Post setting AI coding agent.

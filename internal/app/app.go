@@ -12,6 +12,7 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/db"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/docs"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/httpserver"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/post"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
 )
 
@@ -45,14 +46,18 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 
 	var store user.Store = user.NewMemoryStore()
 	var refreshStore auth.RefreshStore = auth.NewMemoryRefreshStore()
+	var postStore post.Store = post.NewMemoryStore()
 	if pool != nil {
 		store = user.NewPostgresStore(pool.DB)
 		refreshStore = auth.NewPostgresRefreshStore(pool.DB)
+		postStore = post.NewPostgresStore(pool.DB)
 	}
 	userSvc := user.NewService(store)
 	tokens := auth.NewTokens(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	user.NewHandler(userSvc, log).RegisterRoutes(mux, auth.NewMiddleware(tokens).RequireAuth)
+	requireAuth := auth.NewMiddleware(tokens).RequireAuth
+	user.NewHandler(userSvc, log).RegisterRoutes(mux, requireAuth)
 	auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log).RegisterRoutes(mux)
+	post.NewHandler(post.NewService(postStore), log).RegisterRoutes(mux, requireAuth)
 
 	a := &App{cfg: cfg, log: log, mux: mux}
 	a.server = httpserver.New(cfg.Addr, a.withLogging(mux))
