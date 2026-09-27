@@ -26,27 +26,30 @@ func newListFixture(t *testing.T) listFixture {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
 	createCategory(t, svc, "beta", "Beta")
+	createDerivative(t, svc, "alpha-child", "Aa Child", "alpha")
 	return listFixture{
 		svc: svc,
-		p1:  seedPost(t, svc, "setup-claude-code", "Setup Claude Code", []string{"alpha"}, 2),
-		p2:  seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", []string{"alpha", "beta"}, 3),
-		p3:  seedPost(t, svc, "postgres-notes", "Postgres Notes", []string{"beta"}, 4),
+		p1:  seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", "", 2),
+		p2:  seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child", 3),
+		p3:  seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", "", 4),
 	}
 }
 
-// seedPost creates one post through the service with markdown items.
-func seedPost(t *testing.T, svc *Service, slug, title string, categories []string, itemCount int) Post {
+// seedPost creates one post through the service with markdown items. The
+// derivative is empty for a post that picks only its top-level category.
+func seedPost(t *testing.T, svc *Service, slug, title, category, derivative string, itemCount int) Post {
 	t.Helper()
 	items := make([]ItemInput, 0, itemCount)
 	for index := 0; index < itemCount; index++ {
 		items = append(items, ItemInput{Kind: KindMarkdown, BodyText: text("# " + slug + " " + strconv.Itoa(index))})
 	}
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          slug,
-		Title:         title,
-		AuthorID:      "user-1",
-		CategorySlugs: categories,
-		Items:         items,
+		Slug:           slug,
+		Title:          title,
+		AuthorID:       "user-1",
+		CategorySlug:   category,
+		DerivativeSlug: derivative,
+		Items:          items,
 	})
 	if err != nil {
 		t.Fatalf("Create(%q) error = %v", slug, err)
@@ -113,8 +116,17 @@ func TestListFiltersByCategorySlug(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List(beta) error = %v", err)
 	}
-	if got := sortedSlugs(beta); got != "claude-code-hooks,postgres-notes" {
-		t.Fatalf("List(beta) slugs = %q, want both beta posts", got)
+	if got := sortedSlugs(beta); got != "postgres-notes" {
+		t.Fatalf("List(beta) slugs = %q, want the beta post alone", got)
+	}
+
+	// filtering by a derivative matches only the posts that picked it
+	child, err := fixture.svc.List(context.Background(), ListFilter{CategorySlug: "alpha-child"})
+	if err != nil {
+		t.Fatalf("List(alpha-child) error = %v", err)
+	}
+	if got := sortedSlugs(child); got != "claude-code-hooks" {
+		t.Fatalf("List(alpha-child) slugs = %q, want only the derivative post", got)
 	}
 
 	// the service trims and lowercases the filter before the store call
@@ -152,12 +164,12 @@ func TestListFiltersByQueryCaseInsensitive(t *testing.T) {
 	}
 
 	// the query combines with the category filter
-	combined, err := fixture.svc.List(context.Background(), ListFilter{CategorySlug: "beta", Query: "claude"})
+	combined, err := fixture.svc.List(context.Background(), ListFilter{CategorySlug: "alpha-child", Query: "claude"})
 	if err != nil {
-		t.Fatalf("List(beta, claude) error = %v", err)
+		t.Fatalf("List(alpha-child, claude) error = %v", err)
 	}
 	if got := sortedSlugs(combined); got != "claude-code-hooks" {
-		t.Fatalf("List(beta, claude) slugs = %q, want only claude-code-hooks", got)
+		t.Fatalf("List(alpha-child, claude) slugs = %q, want only claude-code-hooks", got)
 	}
 
 	miss, err := fixture.svc.List(context.Background(), ListFilter{CategorySlug: "beta", Query: "setup"})
@@ -208,8 +220,8 @@ func TestFindBySlugReturnsCategoriesAndItemsInDisplayOrder(t *testing.T) {
 	if found.ID != fixture.p2.ID {
 		t.Fatalf("id = %q, want %q", found.ID, fixture.p2.ID)
 	}
-	if got := namesInOrder(found.Categories); got != "Alpha,Beta" {
-		t.Fatalf("category names = %q, want the name order Alpha,Beta", got)
+	if got := namesInOrder(found.Categories); got != "Alpha,Aa Child" {
+		t.Fatalf("category names = %q, want the category first even though the derivative name sorts first", got)
 	}
 	if len(found.Items) != 3 {
 		t.Fatalf("len(items) = %d, want 3", len(found.Items))
@@ -302,9 +314,10 @@ func TestListHandlerReturnsPostsWithoutItems(t *testing.T) {
 	svc := NewService(store)
 	createCategory(t, svc, "alpha", "Alpha")
 	createCategory(t, svc, "beta", "Beta")
-	seedPost(t, svc, "setup-claude-code", "Setup Claude Code", []string{"alpha"}, 2)
-	seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", []string{"alpha", "beta"}, 3)
-	seedPost(t, svc, "postgres-notes", "Postgres Notes", []string{"beta"}, 4)
+	createDerivative(t, svc, "alpha-child", "Aa Child", "alpha")
+	seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", "", 2)
+	seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child", 3)
+	seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", "", 4)
 
 	res := doJSON(t, mux, http.MethodGet, "/posts", "", "")
 	if res.Code != http.StatusOK {
@@ -335,9 +348,9 @@ func TestListHandlerReturnsPostsWithoutItems(t *testing.T) {
 	}
 
 	// category and query narrow the same list
-	res = doJSON(t, mux, http.MethodGet, "/posts?category=beta&q=claude", "", "")
+	res = doJSON(t, mux, http.MethodGet, "/posts?category=alpha-child&q=claude", "", "")
 	if res.Code != http.StatusOK {
-		t.Fatalf("GET /posts?category=beta&q=claude status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+		t.Fatalf("GET /posts?category=alpha-child&q=claude status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
 	var filtered []Post
 	if err := json.Unmarshal(res.Body.Bytes(), &filtered); err != nil {
@@ -363,10 +376,10 @@ func TestGetHandlerReturnsItemsInPositionOrder(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "setup-claude-code",
-		Title:         "Setup Claude Code",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
+		Slug:         "setup-claude-code",
+		Title:        "Setup Claude Code",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
 		Items: []ItemInput{
 			{Kind: KindMarkdown, BodyText: text("# Intro")},
 			{Kind: KindLink, URL: text("https://ampcode.com/docs")},
@@ -446,8 +459,8 @@ func TestEscapeLikePattern(t *testing.T) {
 func TestListQueryTreatsLikeMetacharactersLiterally(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
-	seedPost(t, svc, "percent-title", "100% done", []string{"alpha"}, 1)
-	seedPost(t, svc, "plain-title", "100x done", []string{"alpha"}, 1)
+	seedPost(t, svc, "percent-title", "100% done", "alpha", "", 1)
+	seedPost(t, svc, "plain-title", "100x done", "alpha", "", 1)
 
 	posts, err := svc.List(context.Background(), ListFilter{Query: "100%"})
 	if err != nil {
@@ -499,34 +512,107 @@ func TestListCategoriesTieBreaksOnID(t *testing.T) {
 	}
 }
 
-// TestCreatePostCategoryTieBreaksOnSlug proves the categories embedded in a
-// post come back in (name, slug) order, the order a Postgres detail read
-// returns.
-func TestCreatePostCategoryTieBreaksOnSlug(t *testing.T) {
+// TestCreatePostCategoryOrderPutsTheCategoryFirst proves the categories
+// embedded in a post come back with the chosen category first and its
+// derivative second, even when the derivative's display name sorts first.
+func TestCreatePostCategoryOrderPutsTheCategoryFirst(t *testing.T) {
 	svc := NewService(NewMemoryStore())
-	createCategory(t, svc, "same-two", "Same Name")
-	createCategory(t, svc, "same-one", "Same Name")
-	createCategory(t, svc, "alpha", "Alpha")
+	// the parent's display name sorts last, so name order alone would flip them
+	createCategory(t, svc, "zeta-parent", "Zulu")
+	createDerivative(t, svc, "alpha-der", "Alpha", "zeta-parent")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "tie-break-order",
-		Title:         "Tie Break Order",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"same-two", "same-one", "alpha"},
-		Items:         []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		Slug:           "order-check",
+		Title:          "Order Check",
+		AuthorID:       "user-1",
+		CategorySlug:   "zeta-parent",
+		DerivativeSlug: "alpha-der",
+		Items:          []ItemInput{{Kind: KindText, BodyText: text("body")}},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if got := slugsInOrder(created.Categories); got != "alpha,same-one,same-two" {
-		t.Fatalf("category slugs = %q, want the name then slug order alpha,same-one,same-two", got)
+	if got := slugsInOrder(created.Categories); got != "zeta-parent,alpha-der" {
+		t.Fatalf("category slugs = %q, want the chosen category before its derivative", got)
 	}
 
-	stored, err := svc.Get(context.Background(), "tie-break-order")
+	stored, err := svc.Get(context.Background(), "order-check")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got := slugsInOrder(stored.Categories); got != "alpha,same-one,same-two" {
-		t.Fatalf("stored category slugs = %q, want alpha,same-one,same-two", got)
+	if got := slugsInOrder(stored.Categories); got != "zeta-parent,alpha-der" {
+		t.Fatalf("stored category slugs = %q, want the chosen category before its derivative", got)
+	}
+}
+
+// TestListCategoriesKeepsSameNamedParentsTogether proves the read order groups
+// each parent with its own children even when two parents share a display name,
+// which name-only grouping would interleave.
+func TestListCategoriesKeepsSameNamedParentsTogether(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "parent-a", "Same Name")
+	createCategory(t, svc, "parent-b", "Same Name")
+	createDerivative(t, svc, "child-z", "Zeta Child", "parent-a")
+	createDerivative(t, svc, "child-a", "Alpha Child", "parent-b")
+
+	categories, err := svc.ListCategories(context.Background())
+	if err != nil {
+		t.Fatalf("ListCategories() error = %v", err)
+	}
+	slugs := make([]string, 0, len(categories))
+	indexOf := make(map[string]int, len(categories))
+	for index, category := range categories {
+		slugs = append(slugs, category.Slug)
+		indexOf[category.Slug] = index
+	}
+
+	// whichever parent comes first, its own child sits immediately after it
+	for parent, child := range map[string]string{"parent-a": "child-z", "parent-b": "child-a"} {
+		if indexOf[child] != indexOf[parent]+1 {
+			t.Fatalf("order = %v, want %s immediately after its parent %s", slugs, child, parent)
+		}
+	}
+}
+
+// TestCreateCategoryHierarchy proves the create-category rules: a derivative
+// attaches to a top-level parent, and the tree never grows past two levels.
+func TestCreateCategoryHierarchy(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	parent := createCategory(t, svc, "coding", "Coding")
+	if parent.ParentSlug != nil {
+		t.Fatalf("top-level parent_slug = %v, want nil", parent.ParentSlug)
+	}
+
+	child := createDerivative(t, svc, "claude-code", "Claude Code", "coding")
+	if child.ParentSlug == nil || *child.ParentSlug != "coding" {
+		t.Fatalf("derivative parent_slug = %v, want coding", child.ParentSlug)
+	}
+
+	// a derivative cannot own derivatives
+	if _, err := svc.CreateCategory(context.Background(), CreateCategoryInput{Slug: "hooks", Name: "Hooks", ParentSlug: "claude-code"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("depth-3 CreateCategory() error = %v, want ErrInvalidInput", err)
+	}
+
+	// the parent must exist
+	if _, err := svc.CreateCategory(context.Background(), CreateCategoryInput{Slug: "orphan", Name: "Orphan", ParentSlug: "nope"}); !errors.Is(err, ErrUnknownCategory) {
+		t.Fatalf("unknown-parent CreateCategory() error = %v, want ErrUnknownCategory", err)
+	}
+}
+
+// TestListCategoriesPutsParentsFirst proves the read order: parents, then
+// their derivatives, each group in name order.
+func TestListCategoriesPutsParentsFirst(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "zeta", "Zeta")
+	createCategory(t, svc, "alpha", "Alpha")
+	createDerivative(t, svc, "alpha-zz", "Zz Child", "alpha")
+	createDerivative(t, svc, "alpha-aa", "Aa Child", "alpha")
+
+	categories, err := svc.ListCategories(context.Background())
+	if err != nil {
+		t.Fatalf("ListCategories() error = %v", err)
+	}
+	if got := slugsInOrder(categories); got != "alpha,alpha-aa,alpha-zz,zeta" {
+		t.Fatalf("category slugs = %q, want each parent followed by its children", got)
 	}
 }

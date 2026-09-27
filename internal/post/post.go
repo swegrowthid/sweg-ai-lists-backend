@@ -6,13 +6,15 @@ import (
 )
 
 // Category groups posts, for example "coding agent". The slug is the stable
-// handle clients filter by.
+// handle clients filter by. ParentSlug is nil for a top-level category and set
+// to the parent's slug for a derivative: the tree is at most two levels deep.
 type Category struct {
-	ID        string    `json:"id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Slug       string    `json:"slug"`
+	Name       string    `json:"name"`
+	ParentSlug *string   `json:"parent_slug"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // Kind is the payload shape of one item. One item carries exactly one shape.
@@ -78,19 +80,27 @@ var (
 )
 
 // CreateCategoryInput is the validated input for the create-category use case.
+// ParentSlug is empty for a top-level category. A non-empty ParentSlug must
+// name an existing top-level category: the tree is only two levels deep.
 type CreateCategoryInput struct {
-	Slug string
-	Name string
+	Slug       string
+	Name       string
+	ParentSlug string
 }
 
 // CreatePostInput is the validated input for the create-post use case.
+// CategorySlug names the top-level category the post belongs to and
+// DerivativeSlug optionally names one of its direct children. The service
+// resolves the pair into CategorySlugs, the list the store links.
 // Item positions are already assigned from the request order.
 type CreatePostInput struct {
-	Slug          string
-	Title         string
-	AuthorID      string
-	CategorySlugs []string
-	Items         []ItemInput
+	Slug           string
+	Title          string
+	AuthorID       string
+	CategorySlug   string
+	DerivativeSlug string
+	CategorySlugs  []string
+	Items          []ItemInput
 }
 
 // ItemInput is one item as the client sent it. Each payload field is a

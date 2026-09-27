@@ -82,12 +82,22 @@ func registerAndLogin(t *testing.T, mux *http.ServeMux, username string) (string
 	return registered.ID, pair.AccessToken
 }
 
-// createCategory seeds one category through the service.
+// createCategory seeds one top-level category through the service.
 func createCategory(t *testing.T, svc *Service, slug, name string) Category {
 	t.Helper()
 	created, err := svc.CreateCategory(context.Background(), CreateCategoryInput{Slug: slug, Name: name})
 	if err != nil {
 		t.Fatalf("CreateCategory(%q) error = %v", slug, err)
+	}
+	return created
+}
+
+// createDerivative seeds one derivative under an existing top-level category.
+func createDerivative(t *testing.T, svc *Service, slug, name, parent string) Category {
+	t.Helper()
+	created, err := svc.CreateCategory(context.Background(), CreateCategoryInput{Slug: slug, Name: name, ParentSlug: parent})
+	if err != nil {
+		t.Fatalf("CreateCategory(%q, parent %q) error = %v", slug, parent, err)
 	}
 	return created
 }
@@ -127,13 +137,14 @@ func positionsInOrder(items []Item) string {
 func TestCreateStoresCategoriesAndItems(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "coding-agent", "Coding Agent")
-	createCategory(t, svc, "setup", "Setup")
+	createDerivative(t, svc, "setup", "Setup", "coding-agent")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "setup-claude-code",
-		Title:         "Setup Claude Code",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"setup", "coding-agent"},
+		Slug:           "setup-claude-code",
+		Title:          "Setup Claude Code",
+		AuthorID:       "user-1",
+		CategorySlug:   "coding-agent",
+		DerivativeSlug: "setup",
 		Items: []ItemInput{
 			{Kind: KindMarkdown, BodyText: text("# Setup\n\nInstall the CLI.")},
 			{Kind: KindLink, URL: text("https://docs.anthropic.com/claude-code")},
@@ -226,11 +237,11 @@ func TestCreateKeepsExplicitFileMIME(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "explicit-mime",
-		Title:         "Explicit MIME",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
-		Items:         []ItemInput{{Kind: KindFile, BodyText: text("# Notes"), Filename: text("notes.txt"), MIME: text("text/plain")}},
+		Slug:         "explicit-mime",
+		Title:        "Explicit MIME",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindFile, BodyText: text("# Notes"), Filename: text("notes.txt"), MIME: text("text/plain")}},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -249,10 +260,10 @@ func TestCreateNormalizesSlugAndTitle(t *testing.T) {
 	// the one payload that keeps its exact bytes; url, filename, and mime
 	// still lose their surrounding whitespace.
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          " Setup-Claude-Code ",
-		Title:         "  Setup Claude Code  ",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{" setup "},
+		Slug:         " Setup-Claude-Code ",
+		Title:        "  Setup Claude Code  ",
+		AuthorID:     "user-1",
+		CategorySlug: " setup ",
 		Items: []ItemInput{
 			{Kind: KindText, BodyText: text("  hello  ")},
 			{Kind: KindFile, BodyText: text("  file body\n"), Filename: text("  notes.md  "), MIME: text("  text/plain  ")},
@@ -299,17 +310,16 @@ func TestCreateNormalizesSlugAndTitle(t *testing.T) {
 func TestCreateRejectsInvalidInput(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
-	for index := 1; index <= 8; index++ {
-		createCategory(t, svc, "cat-"+strconv.Itoa(index), "Cat "+strconv.Itoa(index))
-	}
+	createCategory(t, svc, "beta", "Beta")
+	createDerivative(t, svc, "alpha-child", "Alpha Child", "alpha")
 
 	valid := func() CreatePostInput {
 		return CreatePostInput{
-			Slug:          "valid-post",
-			Title:         "Valid Post",
-			AuthorID:      "user-1",
-			CategorySlugs: []string{"alpha"},
-			Items:         []ItemInput{{Kind: KindMarkdown, BodyText: text("# Body")}},
+			Slug:         "valid-post",
+			Title:        "Valid Post",
+			AuthorID:     "user-1",
+			CategorySlug: "alpha",
+			Items:        []ItemInput{{Kind: KindMarkdown, BodyText: text("# Body")}},
 		}
 	}
 
@@ -324,13 +334,11 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 		{"slug with double dash", func(in *CreatePostInput) { in.Slug = "bad--slug" }},
 		{"empty slug", func(in *CreatePostInput) { in.Slug = "" }},
 		{"slug with inner space", func(in *CreatePostInput) { in.Slug = "setup-claude code" }},
-		{"zero categories", func(in *CreatePostInput) { in.CategorySlugs = nil }},
-		{"nine categories", func(in *CreatePostInput) {
-			slugs := []string{"alpha"}
-			for index := 1; index <= 8; index++ {
-				slugs = append(slugs, "cat-"+strconv.Itoa(index))
-			}
-			in.CategorySlugs = slugs
+		{"empty category", func(in *CreatePostInput) { in.CategorySlug = "" }},
+		{"category is itself a derivative", func(in *CreatePostInput) { in.CategorySlug = "alpha-child" }},
+		{"derivative belongs to another category", func(in *CreatePostInput) {
+			in.CategorySlug = "alpha"
+			in.DerivativeSlug = "beta"
 		}},
 		{"zero items", func(in *CreatePostInput) { in.Items = nil }},
 		{"twenty-one items", func(in *CreatePostInput) {
@@ -404,22 +412,22 @@ func TestCreateDuplicatePostSlugConflicts(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	if _, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "first-post",
-		Title:         "First Post",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
-		Items:         []ItemInput{{Kind: KindMarkdown, BodyText: text("# First")}},
+		Slug:         "first-post",
+		Title:        "First Post",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindMarkdown, BodyText: text("# First")}},
 	}); err != nil {
 		t.Fatalf("first Create() error = %v", err)
 	}
 
 	// the slug is normalized before the unique check
 	if _, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          " First-Post ",
-		Title:         "Second Post",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
-		Items:         []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		Slug:         " First-Post ",
+		Title:        "Second Post",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
 	}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate Create() error = %v, want ErrConflict", err)
 	}
@@ -438,11 +446,12 @@ func TestCreateUnknownCategoryRejected(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	_, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "unknown-category",
-		Title:         "Unknown Category",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha", "nope"},
-		Items:         []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		Slug:           "unknown-category",
+		Title:          "Unknown Category",
+		AuthorID:       "user-1",
+		CategorySlug:   "alpha",
+		DerivativeSlug: "nope",
+		Items:          []ItemInput{{Kind: KindText, BodyText: text("body")}},
 	})
 	if !errors.Is(err, ErrUnknownCategory) {
 		t.Fatalf("Create() error = %v, want ErrUnknownCategory", err)
@@ -457,38 +466,45 @@ func TestCreateUnknownCategoryRejected(t *testing.T) {
 	}
 }
 
-func TestCreateDeduplicatesCategorySlugs(t *testing.T) {
+func TestCreateResolvesCategoryAndDerivative(t *testing.T) {
 	svc := NewService(NewMemoryStore())
-	createCategory(t, svc, "alpha", "Alpha")
-	createCategory(t, svc, "beta", "Beta")
+	createCategory(t, svc, "coding", "Coding")
+	createDerivative(t, svc, "claude-code", "Claude Code", "coding")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "deduped",
-		Title:         "Deduped",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha", "alpha"},
-		Items:         []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		Slug:           "setup-claude-code",
+		Title:          "Setup Claude Code",
+		AuthorID:       "user-1",
+		CategorySlug:   "coding",
+		DerivativeSlug: "claude-code",
+		Items:          []ItemInput{{Kind: KindText, BodyText: text("body")}},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if got := slugsInOrder(created.Categories); got != "alpha" {
-		t.Fatalf("category slugs = %q, want one alpha", got)
+	if got := slugsInOrder(created.Categories); got != "coding,claude-code" {
+		t.Fatalf("category slugs = %q, want coding,claude-code", got)
+	}
+	if created.Categories[0].ParentSlug != nil {
+		t.Fatalf("parent_slug of the category = %v, want nil", *created.Categories[0].ParentSlug)
+	}
+	if created.Categories[1].ParentSlug == nil || *created.Categories[1].ParentSlug != "coding" {
+		t.Fatalf("parent_slug of the derivative = %v, want coding", created.Categories[1].ParentSlug)
 	}
 
-	// repeats collapse, and what stays comes back in name order
-	created, err = svc.Create(context.Background(), CreatePostInput{
-		Slug:          "deduped-order",
-		Title:         "Deduped Order",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"beta", "alpha", "beta"},
-		Items:         []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	// a post that picks no derivative links the category alone
+	plain, err := svc.Create(context.Background(), CreatePostInput{
+		Slug:         "plain-post",
+		Title:        "Plain Post",
+		AuthorID:     "user-1",
+		CategorySlug: "coding",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
 	})
 	if err != nil {
 		t.Fatalf("second Create() error = %v", err)
 	}
-	if got := slugsInOrder(created.Categories); got != "alpha,beta" {
-		t.Fatalf("category slugs = %q, want alpha,beta", got)
+	if got := slugsInOrder(plain.Categories); got != "coding" {
+		t.Fatalf("category slugs = %q, want coding alone", got)
 	}
 }
 
@@ -511,7 +527,7 @@ func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 	res = doJSON(t, mux, http.MethodPost, "/posts", `{
 		"slug": "setup-claude-code",
 		"title": "Setup Claude Code",
-		"categories": ["coding-agent"],
+		"category": "coding-agent",
 		"items": [
 			{"kind": "markdown", "body_text": "# Body"},
 			{"kind": "file", "body_text": "# Notes", "filename": "notes.md"}
@@ -557,7 +573,7 @@ func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 func TestCreateHandlerRejectsMissingToken(t *testing.T) {
 	mux := newTestMux()
 
-	res := doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"no-token","title":"No Token","categories":["alpha"],"items":[{"kind":"markdown","body_text":"# Body"}]}`, "")
+	res := doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"no-token","title":"No Token","category":"alpha","items":[{"kind":"markdown","body_text":"# Body"}]}`, "")
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("POST /posts without token status = %d, want %d; body = %s", res.Code, http.StatusUnauthorized, res.Body.String())
 	}
@@ -588,7 +604,7 @@ func TestCreateHandlerRejectsUnknownField(t *testing.T) {
 	res := doJSON(t, mux, http.MethodPost, "/posts", `{
 		"slug": "extra-field",
 		"title": "Extra Field",
-		"categories": ["alpha"],
+		"category": "alpha",
 		"items": [{"kind": "markdown", "body_text": "# Body"}],
 		"author_id": "someone-else"
 	}`, token)
@@ -610,7 +626,7 @@ func TestCreateHandlerRejectsBadRequestsWithoutStoring(t *testing.T) {
 	if res.Code != http.StatusCreated {
 		t.Fatalf("POST /categories status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
-	res = doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"first-post","title":"First Post","categories":["alpha"],"items":[{"kind":"markdown","body_text":"# First"}]}`, token)
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"first-post","title":"First Post","category":"alpha","items":[{"kind":"markdown","body_text":"# First"}]}`, token)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("first POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
@@ -624,20 +640,20 @@ func TestCreateHandlerRejectsBadRequestsWithoutStoring(t *testing.T) {
 	}{
 		{
 			name:    "duplicate slug",
-			body:    `{"slug":"first-post","title":"Second Post","categories":["alpha"],"items":[{"kind":"text","body_text":"body"}]}`,
+			body:    `{"slug":"first-post","title":"Second Post","category":"alpha","items":[{"kind":"text","body_text":"body"}]}`,
 			status:  http.StatusConflict,
 			message: "slug already exists",
 		},
 		{
 			name:    "unknown category",
-			body:    `{"slug":"unknown-category","title":"Unknown","categories":["nope"],"items":[{"kind":"text","body_text":"body"}]}`,
+			body:    `{"slug":"unknown-category","title":"Unknown","category":"nope","items":[{"kind":"text","body_text":"body"}]}`,
 			status:  http.StatusBadRequest,
 			message: "unknown category",
 			slug:    "unknown-category",
 		},
 		{
 			name:    "invalid item",
-			body:    `{"slug":"bad-item","title":"Bad Item","categories":["alpha"],"items":[{"kind":"link"}]}`,
+			body:    `{"slug":"bad-item","title":"Bad Item","category":"alpha","items":[{"kind":"link"}]}`,
 			status:  http.StatusBadRequest,
 			message: "invalid input",
 			slug:    "bad-item",
@@ -700,10 +716,10 @@ func TestCreateKeepsBodyTextExactBytes(t *testing.T) {
 	const fileBody = "# Notes\n\nInline file.\n"
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "exact-bytes",
-		Title:         "Exact Bytes",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
+		Slug:         "exact-bytes",
+		Title:        "Exact Bytes",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
 		Items: []ItemInput{
 			{Kind: KindMarkdown, BodyText: text(markdownBody)},
 			{Kind: KindFile, BodyText: text(fileBody), Filename: text("notes.md")},
@@ -748,11 +764,11 @@ func TestCreateRejectsBlankBodyText(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := svc.Create(context.Background(), CreatePostInput{
-			Slug:          "blank-body",
-			Title:         "Blank Body",
-			AuthorID:      "user-1",
-			CategorySlugs: []string{"alpha"},
-			Items:         []ItemInput{tc.item},
+			Slug:         "blank-body",
+			Title:        "Blank Body",
+			AuthorID:     "user-1",
+			CategorySlug: "alpha",
+			Items:        []ItemInput{tc.item},
 		})
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("Create() with %s error = %v, want ErrInvalidInput", tc.name, err)
@@ -788,11 +804,11 @@ func TestCreateRejectsForbiddenFieldSentEmpty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := svc.Create(context.Background(), CreatePostInput{
-			Slug:          "forbidden-empty",
-			Title:         "Forbidden Empty",
-			AuthorID:      "user-1",
-			CategorySlugs: []string{"alpha"},
-			Items:         []ItemInput{tc.item},
+			Slug:         "forbidden-empty",
+			Title:        "Forbidden Empty",
+			AuthorID:     "user-1",
+			CategorySlug: "alpha",
+			Items:        []ItemInput{tc.item},
 		})
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("Create() with %s error = %v, want ErrInvalidInput", tc.name, err)
@@ -808,10 +824,10 @@ func TestCreateAcceptsAbsentForbiddenField(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "absent-fields",
-		Title:         "Absent Fields",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
+		Slug:         "absent-fields",
+		Title:        "Absent Fields",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
 		Items: []ItemInput{
 			// url is still trimmed; only body_text keeps its exact bytes
 			{Kind: KindLink, URL: text("  https://example.com/docs  ")},
@@ -850,11 +866,11 @@ func TestCreateRejectsNULBytes(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 
 	if _, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "nul-title",
-		Title:         "Bad\x00Title",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
-		Items:         []ItemInput{{Kind: KindMarkdown, BodyText: text("# Body")}},
+		Slug:         "nul-title",
+		Title:        "Bad\x00Title",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindMarkdown, BodyText: text("# Body")}},
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("Create() with a NUL in the title error = %v, want ErrInvalidInput", err)
 	}
@@ -877,11 +893,11 @@ func TestCreateRejectsNULBytes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := svc.Create(context.Background(), CreatePostInput{
-			Slug:          "nul-field",
-			Title:         "NUL Field",
-			AuthorID:      "user-1",
-			CategorySlugs: []string{"alpha"},
-			Items:         []ItemInput{tc.item},
+			Slug:         "nul-field",
+			Title:        "NUL Field",
+			AuthorID:     "user-1",
+			CategorySlug: "alpha",
+			Items:        []ItemInput{tc.item},
 		})
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("Create() with a NUL in %s error = %v, want ErrInvalidInput", tc.name, err)
@@ -898,11 +914,11 @@ func TestMemoryStoreClonesItemPayloads(t *testing.T) {
 
 	body := "# Original"
 	created, err := svc.Create(context.Background(), CreatePostInput{
-		Slug:          "clone-check",
-		Title:         "Clone Check",
-		AuthorID:      "user-1",
-		CategorySlugs: []string{"alpha"},
-		Items:         []ItemInput{{Kind: KindMarkdown, BodyText: &body}},
+		Slug:         "clone-check",
+		Title:        "Clone Check",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindMarkdown, BodyText: &body}},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -967,7 +983,7 @@ func TestCreateHandlerRejectsEmptyForbiddenField(t *testing.T) {
 	res = doJSON(t, mux, http.MethodPost, "/posts", `{
 		"slug": "empty-forbidden",
 		"title": "Empty Forbidden",
-		"categories": ["alpha"],
+		"category": "alpha",
 		"items": [{"kind": "link", "url": "https://example.com", "body_text": ""}]
 	}`, token)
 	if res.Code != http.StatusBadRequest {
@@ -985,7 +1001,7 @@ func TestCreateHandlerRejectsEmptyForbiddenField(t *testing.T) {
 	res = doJSON(t, mux, http.MethodPost, "/posts", `{
 		"slug": "null-forbidden",
 		"title": "Null Forbidden",
-		"categories": ["alpha"],
+		"category": "alpha",
 		"items": [{"kind": "link", "url": "https://example.com", "body_text": null}]
 	}`, token)
 	if res.Code != http.StatusCreated {
@@ -1016,7 +1032,7 @@ func TestCreateHandlerKeepsExactBodyText(t *testing.T) {
 	res = doJSON(t, mux, http.MethodPost, "/posts", `{
 		"slug": "exact-bytes",
 		"title": "Exact Bytes",
-		"categories": ["alpha"],
+		"category": "alpha",
 		"items": [{"kind": "markdown", "body_text": "    kode\n\nakhir\n"}]
 	}`, token)
 	if res.Code != http.StatusCreated {

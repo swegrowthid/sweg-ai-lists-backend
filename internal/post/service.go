@@ -12,7 +12,6 @@ const (
 	maxSlugLen      = 100
 	maxTitleLen     = 200
 	maxNameLen      = 100
-	maxCategories   = 8
 	maxItems        = 20
 	maxBodyTextLen  = 64 << 10 // 64 KiB: inline .md files stay small on purpose
 	defaultFileMIME = "text/markdown"
@@ -25,6 +24,7 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 type Store interface {
 	CreateCategory(ctx context.Context, input CreateCategoryInput) (Category, error)
 	ListCategories(ctx context.Context) ([]Category, error)
+	FindCategoryBySlug(ctx context.Context, slug string) (Category, error)
 	Create(ctx context.Context, input CreatePostInput) (Post, error)
 	List(ctx context.Context, filter ListFilter) ([]Post, error)
 	FindBySlug(ctx context.Context, slug string) (Post, error)
@@ -43,12 +43,15 @@ func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
-// ListCategories returns every category in name order.
+// ListCategories returns every category parents first, then their children,
+// each group in name order.
 func (s *Service) ListCategories(ctx context.Context) ([]Category, error) {
 	return s.store.ListCategories(ctx)
 }
 
-// CreateCategory validates and persists one category.
+// CreateCategory validates and persists one category. A non-empty ParentSlug
+// makes the new category a derivative: the parent must exist and must itself be
+// top-level, so the tree never grows past two levels.
 func (s *Service) CreateCategory(ctx context.Context, input CreateCategoryInput) (Category, error) {
 	slug, err := normalizeSlug(input.Slug)
 	if err != nil {
@@ -58,7 +61,21 @@ func (s *Service) CreateCategory(ctx context.Context, input CreateCategoryInput)
 	if name == "" || utf8.RuneCountInString(name) > maxNameLen || hasNUL(name) {
 		return Category{}, ErrInvalidInput
 	}
-	return s.store.CreateCategory(ctx, CreateCategoryInput{Slug: slug, Name: name})
+	parentSlug := strings.ToLower(strings.TrimSpace(input.ParentSlug))
+	if parentSlug != "" {
+		if _, err := normalizeSlug(parentSlug); err != nil {
+			return Category{}, err
+		}
+		parent, err := s.store.FindCategoryBySlug(ctx, parentSlug)
+		if err != nil {
+			return Category{}, err
+		}
+		if parent.ParentSlug != nil {
+			// A derivative cannot own derivatives.
+			return Category{}, ErrInvalidInput
+		}
+	}
+	return s.store.CreateCategory(ctx, CreateCategoryInput{Slug: slug, Name: name, ParentSlug: parentSlug})
 }
 
 // List returns posts newest first, filtered by category slug and title query.
@@ -97,7 +114,7 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 	if strings.TrimSpace(input.AuthorID) == "" {
 		return Post{}, ErrInvalidInput
 	}
-	categorySlugs, err := normalizeCategorySlugs(input.CategorySlugs)
+	categorySlugs, err := s.resolveCategoryChoice(ctx, input.CategorySlug, input.DerivativeSlug)
 	if err != nil {
 		return Post{}, err
 	}
@@ -114,6 +131,40 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 	})
 }
 
+// resolveCategoryChoice turns the client's category plus optional derivative into
+// the category slugs to link. The category must be top-level; the derivative
+// must be one of its direct children.
+func (s *Service) resolveCategoryChoice(ctx context.Context, rawCategory, rawDerivative string) ([]string, error) {
+	categorySlug, err := normalizeSlug(rawCategory)
+	if err != nil {
+		return nil, err
+	}
+	category, err := s.store.FindCategoryBySlug(ctx, categorySlug)
+	if err != nil {
+		return nil, err
+	}
+	if category.ParentSlug != nil {
+		// A post picks a top-level category; its children are the derivatives.
+		return nil, ErrInvalidInput
+	}
+
+	derivativeSlug := strings.ToLower(strings.TrimSpace(rawDerivative))
+	if derivativeSlug == "" {
+		return []string{categorySlug}, nil
+	}
+	if _, err := normalizeSlug(derivativeSlug); err != nil {
+		return nil, err
+	}
+	derivative, err := s.store.FindCategoryBySlug(ctx, derivativeSlug)
+	if err != nil {
+		return nil, err
+	}
+	if derivative.ParentSlug == nil || *derivative.ParentSlug != categorySlug {
+		return nil, ErrInvalidInput
+	}
+	return []string{categorySlug, derivativeSlug}, nil
+}
+
 // normalizeSlug lowercases, trims, and checks the URL-safe shape.
 func normalizeSlug(raw string) (string, error) {
 	slug := strings.ToLower(strings.TrimSpace(raw))
@@ -121,28 +172,6 @@ func normalizeSlug(raw string) (string, error) {
 		return "", ErrInvalidInput
 	}
 	return slug, nil
-}
-
-// normalizeCategorySlugs validates every slug and drops repeats, keeping the
-// request order.
-func normalizeCategorySlugs(raw []string) ([]string, error) {
-	if len(raw) == 0 || len(raw) > maxCategories {
-		return nil, ErrInvalidInput
-	}
-	seen := make(map[string]struct{}, len(raw))
-	slugs := make([]string, 0, len(raw))
-	for _, value := range raw {
-		slug, err := normalizeSlug(value)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[slug]; ok {
-			continue
-		}
-		seen[slug] = struct{}{}
-		slugs = append(slugs, slug)
-	}
-	return slugs, nil
 }
 
 // normalizeItems validates every item and sets position from the array order,

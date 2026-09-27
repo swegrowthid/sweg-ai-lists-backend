@@ -42,14 +42,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) 
 }
 
 type createCategoryRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+	Parent string `json:"parent"`
 }
 
 type createPostRequest struct {
 	Slug       string                  `json:"slug"`
 	Title      string                  `json:"title"`
-	Categories []string                `json:"categories"`
+	Category   string                  `json:"category"`
+	Derivative string                  `json:"derivative"`
 	Items      []createPostItemRequest `json:"items"`
 }
 
@@ -84,8 +86,9 @@ func (h *Handler) createCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := h.svc.CreateCategory(r.Context(), CreateCategoryInput{
-		Slug: request.Slug,
-		Name: request.Name,
+		Slug:       request.Slug,
+		Name:       request.Name,
+		ParentSlug: request.Parent,
 	})
 	if err != nil {
 		h.writeError(w, r, err)
@@ -148,11 +151,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created, err := h.svc.Create(r.Context(), CreatePostInput{
-		Slug:          request.Slug,
-		Title:         request.Title,
-		AuthorID:      principal.UserID,
-		CategorySlugs: request.Categories,
-		Items:         items,
+		Slug:           request.Slug,
+		Title:          request.Title,
+		AuthorID:       principal.UserID,
+		CategorySlug:   request.Category,
+		DerivativeSlug: request.Derivative,
+		Items:          items,
 	})
 	if err != nil {
 		h.writeError(w, r, err)

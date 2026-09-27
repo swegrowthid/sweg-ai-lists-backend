@@ -31,14 +31,25 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-// CreateCategory implements Store with a parameterized insert.
+// CreateCategory implements Store. A non-empty ParentSlug resolves to the
+// parent's id first, so a missing parent is ErrUnknownCategory instead of a
+// silently top-level row.
 func (s *PostgresStore) CreateCategory(ctx context.Context, input CreateCategoryInput) (Category, error) {
+	var parentArg any
+	if input.ParentSlug != "" {
+		parent, err := s.FindCategoryBySlug(ctx, input.ParentSlug)
+		if err != nil {
+			return Category{}, err
+		}
+		parentArg = parent.ID
+	}
+
 	var created Category
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO categories (slug, name)
-		VALUES ($1, $2)
+		INSERT INTO categories (slug, name, parent_id)
+		VALUES ($1, $2, $3)
 		RETURNING id, slug, name, created_at, updated_at
-	`, input.Slug, input.Name).Scan(
+	`, input.Slug, input.Name, parentArg).Scan(
 		&created.ID,
 		&created.Slug,
 		&created.Name,
@@ -46,20 +57,28 @@ func (s *PostgresStore) CreateCategory(ctx context.Context, input CreateCategory
 		&created.UpdatedAt,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
+		switch {
+		case isUniqueViolation(err):
 			return Category{}, ErrConflict
+		case isForeignKeyViolation(err):
+			return Category{}, ErrUnknownCategory
 		}
 		return Category{}, fmt.Errorf("post: create category: %w", err)
+	}
+	if input.ParentSlug != "" {
+		created.ParentSlug = &input.ParentSlug
 	}
 	return created, nil
 }
 
-// ListCategories implements Store in name order.
+// ListCategories implements Store: parents first, then their children, each
+// group in name order.
 func (s *PostgresStore) ListCategories(ctx context.Context) ([]Category, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, slug, name, created_at, updated_at
-		FROM categories
-		ORDER BY name, id
+		SELECT c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
+		FROM categories c
+		LEFT JOIN categories parent ON parent.id = c.parent_id
+		ORDER BY COALESCE(parent.name, c.name), COALESCE(parent.id, c.id), (c.parent_id IS NOT NULL), c.name, c.id
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("post: list categories query: %w", err)
@@ -68,14 +87,8 @@ func (s *PostgresStore) ListCategories(ctx context.Context) ([]Category, error) 
 
 	categories := []Category{}
 	for rows.Next() {
-		var category Category
-		if err := rows.Scan(
-			&category.ID,
-			&category.Slug,
-			&category.Name,
-			&category.CreatedAt,
-			&category.UpdatedAt,
-		); err != nil {
+		category, err := scanCategoryRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("post: list categories scan: %w", err)
 		}
 		categories = append(categories, category)
@@ -84,6 +97,49 @@ func (s *PostgresStore) ListCategories(ctx context.Context) ([]Category, error) 
 		return nil, fmt.Errorf("post: list categories rows: %w", err)
 	}
 	return categories, nil
+}
+
+// FindCategoryBySlug implements Store. A missing slug is ErrUnknownCategory,
+// not ErrNotFound: the caller asked for a category, not for a post.
+func (s *PostgresStore) FindCategoryBySlug(ctx context.Context, slug string) (Category, error) {
+	var category Category
+	err := s.db.QueryRowContext(ctx, `
+		SELECT c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
+		FROM categories c
+		LEFT JOIN categories parent ON parent.id = c.parent_id
+		WHERE c.slug = $1
+	`, slug).Scan(
+		&category.ID,
+		&category.Slug,
+		&category.Name,
+		&category.ParentSlug,
+		&category.CreatedAt,
+		&category.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Category{}, ErrUnknownCategory
+		}
+		return Category{}, fmt.Errorf("post: find category: %w", err)
+	}
+	return category, nil
+}
+
+// scanCategoryRow reads one joined category row. parent.slug stays NULL for a
+// top-level category.
+func scanCategoryRow(rows *sql.Rows) (Category, error) {
+	var category Category
+	if err := rows.Scan(
+		&category.ID,
+		&category.Slug,
+		&category.Name,
+		&category.ParentSlug,
+		&category.CreatedAt,
+		&category.UpdatedAt,
+	); err != nil {
+		return Category{}, err
+	}
+	return category, nil
 }
 
 // Create implements Store. One transaction writes the post, its category
@@ -120,17 +176,20 @@ func (s *PostgresStore) Create(ctx context.Context, input CreatePostInput) (Post
 func (s *PostgresStore) List(ctx context.Context, filter ListFilter) ([]Post, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.slug, p.title, p.author_id, p.created_at, p.updated_at,
-		       c.id, c.slug, c.name, c.created_at, c.updated_at
+		       c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
 		FROM posts p
 		JOIN post_categories pc ON pc.post_id = p.id
 		JOIN categories c ON c.id = pc.category_id
+		LEFT JOIN categories parent ON parent.id = c.parent_id
 		WHERE ($1 = '' OR EXISTS (
 		         SELECT 1
 		         FROM post_categories fpc
 		         JOIN categories fc ON fc.id = fpc.category_id
-		         WHERE fpc.post_id = p.id AND fc.slug = $1))
+		         LEFT JOIN categories fp ON fp.id = fc.parent_id
+		         WHERE fpc.post_id = p.id
+		           AND (fc.slug = $1 OR fp.slug = $1)))
 		  AND ($2 = '' OR p.title ILIKE '%' || $2 || '%')
-		ORDER BY p.created_at DESC, p.id, c.name, c.slug
+		ORDER BY p.created_at DESC, p.id, (c.parent_id IS NOT NULL), c.name, c.slug
 	`, filter.CategorySlug, escapeLikePattern(filter.Query))
 	if err != nil {
 		return nil, fmt.Errorf("post: list query: %w", err)
@@ -217,12 +276,13 @@ func insertItems(ctx context.Context, q querier, postID string, items []ItemInpu
 func findBySlug(ctx context.Context, q querier, slug string) (Post, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT p.id, p.slug, p.title, p.author_id, p.created_at, p.updated_at,
-		       c.id, c.slug, c.name, c.created_at, c.updated_at
+		       c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
 		FROM posts p
 		JOIN post_categories pc ON pc.post_id = p.id
 		JOIN categories c ON c.id = pc.category_id
+		LEFT JOIN categories parent ON parent.id = c.parent_id
 		WHERE p.slug = $1
-		ORDER BY c.name, c.slug
+		ORDER BY (c.parent_id IS NOT NULL), c.name, c.slug
 	`, slug)
 	if err != nil {
 		return Post{}, fmt.Errorf("post: find query: %w", err)
@@ -293,7 +353,8 @@ func scanPosts(rows *sql.Rows) ([]Post, error) {
 		)
 		if err := rows.Scan(
 			&post.ID, &post.Slug, &post.Title, &post.AuthorID, &post.CreatedAt, &post.UpdatedAt,
-			&category.ID, &category.Slug, &category.Name, &category.CreatedAt, &category.UpdatedAt,
+			&category.ID, &category.Slug, &category.Name, &category.ParentSlug,
+			&category.CreatedAt, &category.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("post: scan: %w", err)
 		}

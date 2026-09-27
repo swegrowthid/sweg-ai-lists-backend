@@ -24,7 +24,8 @@ type MemoryStore struct {
 // NewMemoryStore builds an empty store.
 func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
 
-// CreateCategory implements Store and mirrors the unique slug constraint.
+// CreateCategory implements Store and mirrors the unique slug constraint and
+// the parent lookup: a missing parent is ErrUnknownCategory.
 func (m *MemoryStore) CreateCategory(_ context.Context, input CreateCategoryInput) (Category, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -34,6 +35,14 @@ func (m *MemoryStore) CreateCategory(_ context.Context, input CreateCategoryInpu
 			return Category{}, ErrConflict
 		}
 	}
+	var parentSlug *string
+	if input.ParentSlug != "" {
+		if _, ok := m.categoryBySlug(input.ParentSlug); !ok {
+			return Category{}, ErrUnknownCategory
+		}
+		value := input.ParentSlug
+		parentSlug = &value
+	}
 
 	now := time.Now().UTC()
 	categoryID, err := id.New()
@@ -41,31 +50,79 @@ func (m *MemoryStore) CreateCategory(_ context.Context, input CreateCategoryInpu
 		return Category{}, fmt.Errorf("post: generate category id: %w", err)
 	}
 	created := Category{
-		ID:        categoryID,
-		Slug:      input.Slug,
-		Name:      input.Name,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         categoryID,
+		Slug:       input.Slug,
+		Name:       input.Name,
+		ParentSlug: parentSlug,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	m.categories = append(m.categories, created)
-	return created, nil
+	return cloneCategory(created), nil
 }
 
-// ListCategories implements Store in name order, id as the tie-break, the same
-// order the Postgres store returns.
+// ListCategories implements Store: parents first, then their children, each
+// group in name order, id as the tie-break. Same order as the Postgres store.
 func (m *MemoryStore) ListCategories(_ context.Context) ([]Category, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	out := make([]Category, len(m.categories))
-	copy(out, m.categories)
+	out := make([]Category, 0, len(m.categories))
+	for _, category := range m.categories {
+		out = append(out, cloneCategory(category))
+	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
+		left, right := out[i], out[j]
+		// Group a category with its own parent, by the parent's name and then its
+		// id, so two parents that share a name never interleave their children.
+		leftGroupName, leftGroupID := left.Name, left.ID
+		if left.ParentSlug != nil {
+			if parent, ok := m.categoryBySlug(*left.ParentSlug); ok {
+				leftGroupName, leftGroupID = parent.Name, parent.ID
+			}
 		}
-		return out[i].ID < out[j].ID
+		rightGroupName, rightGroupID := right.Name, right.ID
+		if right.ParentSlug != nil {
+			if parent, ok := m.categoryBySlug(*right.ParentSlug); ok {
+				rightGroupName, rightGroupID = parent.Name, parent.ID
+			}
+		}
+		if leftGroupName != rightGroupName {
+			return leftGroupName < rightGroupName
+		}
+		if leftGroupID != rightGroupID {
+			return leftGroupID < rightGroupID
+		}
+		if (left.ParentSlug != nil) != (right.ParentSlug != nil) {
+			return right.ParentSlug != nil
+		}
+		if left.Name != right.Name {
+			return left.Name < right.Name
+		}
+		return left.ID < right.ID
 	})
 	return out, nil
+}
+
+// FindCategoryBySlug implements Store. A missing slug is ErrUnknownCategory.
+func (m *MemoryStore) FindCategoryBySlug(_ context.Context, slug string) (Category, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	category, ok := m.categoryBySlug(slug)
+	if !ok {
+		return Category{}, ErrUnknownCategory
+	}
+	return cloneCategory(category), nil
+}
+
+// categoryBySlug finds one category by its exact slug. Callers hold the lock.
+func (m *MemoryStore) categoryBySlug(slug string) (Category, bool) {
+	for _, category := range m.categories {
+		if category.Slug == slug {
+			return category, true
+		}
+	}
+	return Category{}, false
 }
 
 // Create implements Store and mirrors the unique slug constraint, the category
@@ -156,7 +213,8 @@ func (m *MemoryStore) FindBySlug(_ context.Context, slug string) (Post, error) {
 }
 
 // categoriesBySlug resolves every slug, or fails on the first unknown one.
-// The result is name-ordered, the same order the Postgres store returns.
+// The result puts the top-level category first, then its derivative, then name
+// and slug as tie-breaks - the same order the Postgres store returns.
 // Callers hold the write lock.
 func (m *MemoryStore) categoriesBySlug(slugs []string) ([]Category, error) {
 	resolved := make([]Category, 0, len(slugs))
@@ -164,7 +222,7 @@ func (m *MemoryStore) categoriesBySlug(slugs []string) ([]Category, error) {
 		found := false
 		for _, category := range m.categories {
 			if category.Slug == slug {
-				resolved = append(resolved, category)
+				resolved = append(resolved, cloneCategory(category))
 				found = true
 				break
 			}
@@ -174,6 +232,9 @@ func (m *MemoryStore) categoriesBySlug(slugs []string) ([]Category, error) {
 		}
 	}
 	sort.Slice(resolved, func(i, j int) bool {
+		if (resolved[i].ParentSlug != nil) != (resolved[j].ParentSlug != nil) {
+			return resolved[j].ParentSlug != nil
+		}
 		if resolved[i].Name != resolved[j].Name {
 			return resolved[i].Name < resolved[j].Name
 		}
@@ -189,6 +250,10 @@ func matchesFilter(candidate Post, filter ListFilter) bool {
 		matched := false
 		for _, category := range candidate.Categories {
 			if category.Slug == filter.CategorySlug {
+				matched = true
+				break
+			}
+			if category.ParentSlug != nil && *category.ParentSlug == filter.CategorySlug {
 				matched = true
 				break
 			}
@@ -208,7 +273,9 @@ func matchesFilter(candidate Post, filter ListFilter) bool {
 func clonePost(source Post, withItems bool) Post {
 	out := source
 	out.Categories = make([]Category, len(source.Categories))
-	copy(out.Categories, source.Categories)
+	for index, category := range source.Categories {
+		out.Categories[index] = cloneCategory(category)
+	}
 	if !withItems {
 		out.Items = nil
 		return out
@@ -217,6 +284,14 @@ func clonePost(source Post, withItems bool) Post {
 	for index, item := range source.Items {
 		out.Items[index] = cloneItem(item)
 	}
+	return out
+}
+
+// cloneCategory copies a category and its parent pointer, so a caller can never
+// write into stored state through a shared pointer.
+func cloneCategory(source Category) Category {
+	out := source
+	out.ParentSlug = cloneText(source.ParentSlug)
 	return out
 }
 

@@ -77,10 +77,24 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 		t.Fatalf("create category status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
 
+	res = doJSON(t, handler, http.MethodPost, "/categories",
+		`{"slug":"claude-code","name":"Claude Code","parent":"coding-agent"}`, pair.AccessToken)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create derivative status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	var derivative post.Category
+	if err := json.Unmarshal(res.Body.Bytes(), &derivative); err != nil {
+		t.Fatalf("decode derivative response: %v", err)
+	}
+	if derivative.ParentSlug == nil || *derivative.ParentSlug != "coding-agent" {
+		t.Fatalf("derivative parent_slug = %v, want coding-agent", derivative.ParentSlug)
+	}
+
 	res = doJSON(t, handler, http.MethodPost, "/posts", `{
 		"slug": "setup-claude-code",
 		"title": "Setup Claude Code",
-		"categories": ["coding-agent"],
+		"category": "coding-agent",
+		"derivative": "claude-code",
 		"items": [
 			{"kind": "markdown", "body_text": "# Intro"},
 			{"kind": "link", "url": "https://example.com/docs"},
@@ -96,6 +110,9 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 	}
 	if len(created.Items) != 3 {
 		t.Fatalf("created items = %d, want 3", len(created.Items))
+	}
+	if len(created.Categories) != 2 || created.Categories[0].Slug != "coding-agent" || created.Categories[1].Slug != "claude-code" {
+		t.Fatalf("created categories = %+v, want the category then its derivative", created.Categories)
 	}
 
 	res = doJSON(t, handler, http.MethodGet, "/posts/setup-claude-code", "", "")
@@ -116,5 +133,24 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 	res = doJSON(t, handler, http.MethodGet, "/posts?category=coding-agent", "", "")
 	if res.Code != http.StatusOK {
 		t.Fatalf("list posts status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var byParent []post.Post
+	if err := json.Unmarshal(res.Body.Bytes(), &byParent); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(byParent) != 1 || byParent[0].Slug != "setup-claude-code" {
+		t.Fatalf("list by parent = %+v, want the post in its derivative", byParent)
+	}
+
+	res = doJSON(t, handler, http.MethodGet, "/posts?category=claude-code", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("list by derivative status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var byDerivative []post.Post
+	if err := json.Unmarshal(res.Body.Bytes(), &byDerivative); err != nil {
+		t.Fatalf("decode derivative list response: %v", err)
+	}
+	if len(byDerivative) != 1 || byDerivative[0].Slug != "setup-claude-code" {
+		t.Fatalf("list by derivative = %+v, want the derivative post", byDerivative)
 	}
 }

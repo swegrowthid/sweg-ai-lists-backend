@@ -153,7 +153,7 @@ paths:
         - name: category
           in: query
           required: false
-          description: Filter slug category.
+          description: Filter slug category. Induk ikut mencocokkan turunannya.
           schema:
             type: string
           example: coding-agent
@@ -458,6 +458,11 @@ components:
         name:
           type: string
           example: Coding Agent
+        parent_slug:
+          type: string
+          nullable: true
+          description: Slug induk; null berarti top-level. Maksimal dua level.
+          example: coding
         created_at:
           type: string
           format: date-time
@@ -478,6 +483,11 @@ components:
           type: string
           maxLength: 100
           example: Coding Agent
+        parent:
+          type: string
+          maxLength: 100
+          description: Slug induk, opsional. Induk harus top-level.
+          example: coding
     PostItem:
       type: object
       required: [id, kind, position]
@@ -540,7 +550,7 @@ components:
           format: date-time
     CreatePostRequest:
       type: object
-      required: [slug, title, categories, items]
+      required: [slug, title, category, items]
       additionalProperties: false
       properties:
         slug:
@@ -552,14 +562,16 @@ components:
           type: string
           maxLength: 200
           example: Setup Claude Code
-        categories:
-          type: array
-          minItems: 1
-          maxItems: 8
-          description: Daftar slug category yang sudah ada.
-          example: [coding-agent]
-          items:
-            type: string
+        category:
+          type: string
+          maxLength: 100
+          description: Slug category induk yang sudah ada dan top-level.
+          example: coding
+        derivative:
+          type: string
+          maxLength: 100
+          description: Slug turunan langsung, opsional. Harus anak dari category.
+          example: claude-code
         items:
           type: array
           minItems: 1
