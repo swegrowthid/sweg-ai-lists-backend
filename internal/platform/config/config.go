@@ -17,6 +17,10 @@ type Config struct {
 	DBURL    string
 	DocsUI   bool
 
+	// Browser origins allowed to call the API cross-site, e.g. the static
+	// frontend host. Empty means no CORS headers: same-host callers only.
+	CORSOrigins []string
+
 	JWTSecret     string
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
@@ -52,6 +56,7 @@ func Load() Config {
 		LogLevel:      level,
 		DBURL:         dbURL,
 		DocsUI:        boolEnv("DOCS_UI", env != "prod"),
+		CORSOrigins:   listEnv("CORS_ORIGINS"),
 		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 15*time.Minute),
 		JWTRefreshTTL: durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
@@ -69,6 +74,21 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// listEnv reads a comma-separated env into a slice, dropping blank items.
+func listEnv(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // boolEnv reads a boolean from env, falling back on empty or invalid.

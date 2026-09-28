@@ -32,6 +32,8 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
    `.env-example`: `DB_URL`, `JWT_SECRET`, `JWT_ACCESS_TTL`,
    `JWT_REFRESH_TTL`. Tambah `APP_ENV=prod` dan `APP_ADDR=:8080`.
    Set `DOCS_UI=1` bila UI Scalar di `/docs` mau hidup di prod.
+   Set `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis boleh
+   memanggil API dari browser (tanpa ini register/login kena blok CORS).
 
 4. Pasang unit service:
 

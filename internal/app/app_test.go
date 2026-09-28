@@ -154,3 +154,54 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 		t.Fatalf("list by derivative = %+v, want the derivative post", byDerivative)
 	}
 }
+
+// TestAppCORSAllowlist proves preflights answer only for configured origins.
+// The static frontend lives on another host, so the browser sends OPTIONS
+// first; unlisted origins fall through to the mux untouched.
+func TestAppCORSAllowlist(t *testing.T) {
+	cfg := config.Config{
+		Service:       "sweg-ai-test",
+		Env:           "test",
+		Version:       "test",
+		JWTSecret:     "test-secret-for-app-tests",
+		JWTAccessTTL:  15 * time.Minute,
+		JWTRefreshTTL: 24 * time.Hour,
+		CORSOrigins:   []string{"https://ai-sweg.my.id"},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := New(cfg, log, nil).Handler()
+
+	preflight := httptest.NewRequest(http.MethodOptions, "/users/register", nil)
+	preflight.Header.Set("Origin", "https://ai-sweg.my.id")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, preflight)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+		t.Fatalf("preflight allow-origin = %q, want the frontend origin", got)
+	}
+	if res.Header().Get("Access-Control-Allow-Headers") == "" {
+		t.Fatal("preflight missed allow-headers")
+	}
+
+	res = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/categories", nil)
+	req.Header.Set("Origin", "https://ai-sweg.my.id")
+	handler.ServeHTTP(res, req)
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+		t.Fatalf("GET allow-origin = %q, want the frontend origin", got)
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodOptions, "/users/register", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	handler.ServeHTTP(res, req)
+	if res.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatal("unlisted origin received allow-origin")
+	}
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("unlisted preflight status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+}

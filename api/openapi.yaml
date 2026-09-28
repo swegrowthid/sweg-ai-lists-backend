@@ -5,7 +5,7 @@ info:
   description: Backend komunitas sweg-ai. Satu sumber kontrak API.
 servers:
   - url: /
-    description: Same host - browser pakai host aktif, tanpa CORS tambahan.
+    description: Same host by default. Cross-origin browser calls (frontend statis) butuh origin-nya di env CORS_ORIGINS.
 paths:
   /healthz:
     get:
