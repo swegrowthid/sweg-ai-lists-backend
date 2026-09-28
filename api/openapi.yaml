@@ -247,6 +247,42 @@ paths:
                 type: string
         "500":
           description: Galat server
+    delete:
+      summary: Hapus post - hanya pemilik
+      operationId: deletePost
+      tags: [posts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Slug post.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Post berhasil dihapus
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          description: Post milik user lain
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Post tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /auth/login:
     post:
       summary: Login - identifier terima username atau email
@@ -550,13 +586,13 @@ components:
           format: date-time
     CreatePostRequest:
       type: object
-      required: [slug, title, category, items]
+      required: [title, category, items]
       additionalProperties: false
       properties:
         slug:
           type: string
           maxLength: 100
-          description: Huruf kecil, angka, dan tanda hubung. Unik.
+          description: Huruf kecil, angka, dan tanda hubung. Unik. Dibuat otomatis dari title bila tidak dikirim.
           example: setup-claude-code
         title:
           type: string
@@ -565,12 +601,12 @@ components:
         category:
           type: string
           maxLength: 100
-          description: Slug category induk yang sudah ada dan top-level.
+          description: Slug category yang sudah ada, top-level atau turunan. Slug turunan otomatis ikut menyambung induknya.
           example: coding
         derivative:
           type: string
           maxLength: 100
-          description: Slug turunan langsung, opsional. Harus anak dari category.
+          description: "Slug turunan langsung, opsional. Harus anak dari category. Tidak perlu dikirim bila category sudah menyebut slug turunan."
           example: claude-code
         items:
           type: array

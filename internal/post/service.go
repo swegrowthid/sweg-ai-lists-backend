@@ -2,6 +2,8 @@ package post
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -15,10 +17,22 @@ const (
 	maxItems        = 20
 	maxBodyTextLen  = 64 << 10 // 64 KiB: inline .md files stay small on purpose
 	defaultFileMIME = "text/markdown"
+
+	// maxGeneratedSlugLen caps a slug derived from a title, leaving room for
+	// the -2, -3, ... collision suffixes under maxSlugLen.
+	maxGeneratedSlugLen = 90
+
+	// maxSlugAttempts bounds the base, base-2, base-3, ... retry loop for a
+	// generated slug.
+	maxSlugAttempts = 100
 )
 
 // slugPattern keeps slugs URL-safe: lowercase words joined by single dashes.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// nonSlugRun matches every run of characters outside [a-z0-9]; each run
+// becomes one dash when a slug is generated from a title.
+var nonSlugRun = regexp.MustCompile(`[^a-z0-9]+`)
 
 // Store is the persistence port. Service depends on it, never on SQL.
 type Store interface {
@@ -28,6 +42,7 @@ type Store interface {
 	Create(ctx context.Context, input CreatePostInput) (Post, error)
 	List(ctx context.Context, filter ListFilter) ([]Post, error)
 	FindBySlug(ctx context.Context, slug string) (Post, error)
+	Delete(ctx context.Context, slug string) error
 }
 
 // Service owns post and category use-cases. No HTTP, no SQL here.
@@ -101,12 +116,11 @@ func (s *Service) Get(ctx context.Context, slug string) (Post, error) {
 }
 
 // Create validates one post, assigns item positions from the request order,
-// and persists the post with its categories and items.
+// and persists the post with its categories and items. An explicit slug keeps
+// the strict check: a conflict fails fast. An absent or blank slug is
+// generated from the title and retried with -2, -3, ... suffixes until the
+// write lands.
 func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, error) {
-	slug, err := normalizeSlug(input.Slug)
-	if err != nil {
-		return Post{}, err
-	}
 	title := strings.TrimSpace(input.Title)
 	if title == "" || utf8.RuneCountInString(title) > maxTitleLen || hasNUL(title) {
 		return Post{}, ErrInvalidInput
@@ -122,17 +136,62 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 	if err != nil {
 		return Post{}, err
 	}
-	return s.store.Create(ctx, CreatePostInput{
-		Slug:          slug,
+	create := CreatePostInput{
 		Title:         title,
 		AuthorID:      input.AuthorID,
 		CategorySlugs: categorySlugs,
 		Items:         items,
-	})
+	}
+
+	if strings.TrimSpace(input.Slug) != "" {
+		slug, err := normalizeSlug(input.Slug)
+		if err != nil {
+			return Post{}, err
+		}
+		create.Slug = slug
+		return s.store.Create(ctx, create)
+	}
+	return s.createWithGeneratedSlug(ctx, create)
+}
+
+// Delete removes one post. Only the author may delete: a missing post is
+// ErrNotFound, another author's post ErrForbidden.
+func (s *Service) Delete(ctx context.Context, slug, authorID string) error {
+	found, err := s.Get(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if found.AuthorID != authorID {
+		return ErrForbidden
+	}
+	return s.store.Delete(ctx, found.Slug)
+}
+
+// createWithGeneratedSlug derives the slug from the title and retries on a
+// conflict with the -2, -3, ... suffixes, bounded at maxSlugAttempts tries.
+// A pathological run that collides every time ends in ErrConflict.
+func (s *Service) createWithGeneratedSlug(ctx context.Context, create CreatePostInput) (Post, error) {
+	base := slugify(create.Title)
+	for attempt := 1; attempt <= maxSlugAttempts; attempt++ {
+		create.Slug = base
+		if attempt > 1 {
+			create.Slug = fmt.Sprintf("%s-%d", base, attempt)
+		}
+		created, err := s.store.Create(ctx, create)
+		if err == nil {
+			return created, nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return Post{}, err
+		}
+	}
+	return Post{}, ErrConflict
 }
 
 // resolveCategoryChoice turns the client's category plus optional derivative into
-// the category slugs to link. The category must be top-level; the derivative
+// the category slugs to link. The category may name a top-level slug or a
+// derivative: a derivative links its parent too, and the derivative field may
+// then only repeat the same slug. With a top-level category the derivative
 // must be one of its direct children.
 func (s *Service) resolveCategoryChoice(ctx context.Context, rawCategory, rawDerivative string) ([]string, error) {
 	categorySlug, err := normalizeSlug(rawCategory)
@@ -143,12 +202,16 @@ func (s *Service) resolveCategoryChoice(ctx context.Context, rawCategory, rawDer
 	if err != nil {
 		return nil, err
 	}
+	derivativeSlug := strings.ToLower(strings.TrimSpace(rawDerivative))
+
 	if category.ParentSlug != nil {
-		// A post picks a top-level category; its children are the derivatives.
-		return nil, ErrInvalidInput
+		// The category is itself a derivative: link it with its parent.
+		if derivativeSlug != "" && derivativeSlug != categorySlug {
+			return nil, ErrInvalidInput
+		}
+		return []string{*category.ParentSlug, categorySlug}, nil
 	}
 
-	derivativeSlug := strings.ToLower(strings.TrimSpace(rawDerivative))
 	if derivativeSlug == "" {
 		return []string{categorySlug}, nil
 	}
@@ -163,6 +226,21 @@ func (s *Service) resolveCategoryChoice(ctx context.Context, rawCategory, rawDer
 		return nil, ErrInvalidInput
 	}
 	return []string{categorySlug, derivativeSlug}, nil
+}
+
+// slugify derives a URL-safe slug from a title: lowercase, each run of
+// characters outside [a-z0-9] becomes one dash, edge dashes are dropped, and
+// the result is capped at maxGeneratedSlugLen. A title with no usable
+// characters falls back to "post".
+func slugify(title string) string {
+	slug := strings.Trim(nonSlugRun.ReplaceAllString(strings.ToLower(title), "-"), "-")
+	if len(slug) > maxGeneratedSlugLen {
+		slug = strings.TrimRight(slug[:maxGeneratedSlugLen], "-")
+	}
+	if slug == "" {
+		return "post"
+	}
+	return slug
 }
 
 // normalizeSlug lowercases, trims, and checks the URL-safe shape.

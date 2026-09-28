@@ -77,6 +77,9 @@ var (
 	// ErrUnknownAuthor signals an author id with no user row. A live token for
 	// a deleted user is the only way in.
 	ErrUnknownAuthor = errors.New("post: unknown author")
+
+	// ErrForbidden signals a write to a post the caller does not own.
+	ErrForbidden = errors.New("post: forbidden")
 )
 
 // CreateCategoryInput is the validated input for the create-category use case.
@@ -89,9 +92,11 @@ type CreateCategoryInput struct {
 }
 
 // CreatePostInput is the validated input for the create-post use case.
-// CategorySlug names the top-level category the post belongs to and
-// DerivativeSlug optionally names one of its direct children. The service
-// resolves the pair into CategorySlugs, the list the store links.
+// Slug stays empty when the client did not send one: the service generates it
+// from the title. CategorySlug names any existing category, top-level or
+// derivative, and DerivativeSlug optionally names a direct child of a
+// top-level category. The service resolves the pair into CategorySlugs, the
+// list the store links.
 // Item positions are already assigned from the request order.
 type CreatePostInput struct {
 	Slug           string

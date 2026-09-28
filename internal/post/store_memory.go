@@ -212,6 +212,21 @@ func (m *MemoryStore) FindBySlug(_ context.Context, slug string) (Post, error) {
 	return Post{}, ErrNotFound
 }
 
+// Delete implements Store by dropping the post from the slice. A missing slug
+// is ErrNotFound.
+func (m *MemoryStore) Delete(_ context.Context, slug string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for index, candidate := range m.posts {
+		if candidate.Slug == slug {
+			m.posts = append(m.posts[:index], m.posts[index+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 // categoriesBySlug resolves every slug, or fails on the first unknown one.
 // The result puts the top-level category first, then its derivative, then name
 // and slug as tie-breaks - the same order the Postgres store returns.

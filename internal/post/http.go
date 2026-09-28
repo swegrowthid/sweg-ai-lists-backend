@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) 
 	mux.HandleFunc("GET /posts", h.list)
 	mux.Handle("POST /posts", protect(http.HandlerFunc(h.create)))
 	mux.HandleFunc("GET /posts/{slug}", h.get)
+	mux.Handle("DELETE /posts/{slug}", protect(http.HandlerFunc(h.delete)))
 }
 
 type createCategoryRequest struct {
@@ -165,10 +166,26 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, created)
 }
 
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	// The caller must own the post; the owner check lives in the service.
+	principal, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+	if err := h.svc.Delete(r.Context(), r.PathValue("slug"), principal.UserID); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // writeError maps domain errors to status codes. Everything else is a server
 // fault: log it and answer a generic 500.
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "post not found", http.StatusNotFound)
 	case errors.Is(err, ErrInvalidInput):
 		http.Error(w, "invalid input", http.StatusBadRequest)
 	case errors.Is(err, ErrUnknownCategory):
@@ -177,6 +194,8 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		http.Error(w, "author not found", http.StatusUnauthorized)
 	case errors.Is(err, ErrConflict):
 		http.Error(w, "slug already exists", http.StatusConflict)
+	case errors.Is(err, ErrForbidden):
+		http.Error(w, "not your post", http.StatusForbidden)
 	default:
 		h.log.Error("post request failed", "error", err, "method", r.Method, "path", r.URL.Path)
 		http.Error(w, "internal error", http.StatusInternalServerError)

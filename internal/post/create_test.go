@@ -332,10 +332,12 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 		{"empty author", func(in *CreatePostInput) { in.AuthorID = " " }},
 		{"slug with space and bang", func(in *CreatePostInput) { in.Slug = "bad slug!" }},
 		{"slug with double dash", func(in *CreatePostInput) { in.Slug = "bad--slug" }},
-		{"empty slug", func(in *CreatePostInput) { in.Slug = "" }},
 		{"slug with inner space", func(in *CreatePostInput) { in.Slug = "setup-claude code" }},
 		{"empty category", func(in *CreatePostInput) { in.CategorySlug = "" }},
-		{"category is itself a derivative", func(in *CreatePostInput) { in.CategorySlug = "alpha-child" }},
+		{"category derivative mismatches the category slug", func(in *CreatePostInput) {
+			in.CategorySlug = "alpha-child"
+			in.DerivativeSlug = "beta"
+		}},
 		{"derivative belongs to another category", func(in *CreatePostInput) {
 			in.CategorySlug = "alpha"
 			in.DerivativeSlug = "beta"
@@ -508,6 +510,179 @@ func TestCreateResolvesCategoryAndDerivative(t *testing.T) {
 	}
 }
 
+func TestCreateResolvesDerivativeAsCategory(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "coding", "Coding")
+	createDerivative(t, svc, "claude-code", "Claude Code", "coding")
+
+	// naming a derivative as the category links its parent automatically
+	created, err := svc.Create(context.Background(), CreatePostInput{
+		Slug:         "setup-claude-code",
+		Title:        "Setup Claude Code",
+		AuthorID:     "user-1",
+		CategorySlug: "claude-code",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := slugsInOrder(created.Categories); got != "coding,claude-code" {
+		t.Fatalf("category slugs = %q, want coding,claude-code", got)
+	}
+	if created.Categories[1].ParentSlug == nil || *created.Categories[1].ParentSlug != "coding" {
+		t.Fatalf("parent_slug of the derivative = %v, want coding", created.Categories[1].ParentSlug)
+	}
+
+	// the derivative field may repeat the same slug
+	repeated, err := svc.Create(context.Background(), CreatePostInput{
+		Slug:           "repeated-derivative",
+		Title:          "Repeated Derivative",
+		AuthorID:       "user-1",
+		CategorySlug:   "claude-code",
+		DerivativeSlug: "claude-code",
+		Items:          []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	})
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if got := slugsInOrder(repeated.Categories); got != "coding,claude-code" {
+		t.Fatalf("category slugs = %q, want coding,claude-code", got)
+	}
+}
+
+func TestSlugify(t *testing.T) {
+	cases := []struct {
+		title string
+		want  string
+	}{
+		{"Setup Claude Code", "setup-claude-code"},
+		{"Hello, World!", "hello-world"},
+		{"  Trim Me  ", "trim-me"},
+		{"already-a-slug", "already-a-slug"},
+		{"under_score!bang", "under-score-bang"},
+		{"Go 1.22 + generics", "go-1-22-generics"},
+		{"Café à la mode", "caf-la-mode"},
+		{"ÄBC def", "bc-def"},
+		{"--dashes--", "dashes"},
+		{"123", "123"},
+		{"日本語のタイトル", "post"},
+		{"éèê", "post"},
+		{"", "post"},
+		{strings.Repeat("a", 200), strings.Repeat("a", 90)},
+		{strings.Repeat("a", 89) + " " + strings.Repeat("b", 20), strings.Repeat("a", 89)},
+	}
+	for _, tc := range cases {
+		if got := slugify(tc.title); got != tc.want {
+			t.Fatalf("slugify(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}
+
+// TestCreateGeneratesSlugFromTitle proves an absent or blank slug comes from
+// the title and colliding titles take the next free -N suffix.
+func TestCreateGeneratesSlugFromTitle(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "alpha", "Alpha")
+
+	created, err := svc.Create(context.Background(), CreatePostInput{
+		Title:        "Setup Claude Code",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindMarkdown, BodyText: text("# Body")}},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Slug != "setup-claude-code" {
+		t.Fatalf("slug = %q, want setup-claude-code", created.Slug)
+	}
+
+	// a blank slug also falls back to the title
+	blank, err := svc.Create(context.Background(), CreatePostInput{
+		Slug:         "   ",
+		Title:        "Another Post",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	})
+	if err != nil {
+		t.Fatalf("Create() with blank slug error = %v", err)
+	}
+	if blank.Slug != "another-post" {
+		t.Fatalf("slug = %q, want another-post", blank.Slug)
+	}
+
+	// the same title takes the next free suffix
+	second, err := svc.Create(context.Background(), CreatePostInput{
+		Title:        "Setup Claude Code",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	})
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if second.Slug != "setup-claude-code-2" {
+		t.Fatalf("slug = %q, want setup-claude-code-2", second.Slug)
+	}
+
+	// an explicit slug of that name still conflicts instead of suffixing
+	if _, err := svc.Create(context.Background(), CreatePostInput{
+		Slug:         "setup-claude-code",
+		Title:        "Explicit",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("explicit duplicate Create() error = %v, want ErrConflict", err)
+	}
+}
+
+// TestCreateGeneratedSlugFallsBackToPost proves a title with no usable
+// characters lands on the "post" base slug and suffixes from there.
+func TestCreateGeneratedSlugFallsBackToPost(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "alpha", "Alpha")
+
+	for index, want := range []string{"post", "post-2"} {
+		created, err := svc.Create(context.Background(), CreatePostInput{
+			Title:        "日本語のタイトル",
+			AuthorID:     "user-1",
+			CategorySlug: "alpha",
+			Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		})
+		if err != nil {
+			t.Fatalf("Create() #%d error = %v", index, err)
+		}
+		if created.Slug != want {
+			t.Fatalf("slug #%d = %q, want %q", index, created.Slug, want)
+		}
+	}
+}
+
+// TestCreateGeneratedSlugSkipsTakenSuffixes seeds every candidate up to -3
+// before the generated create, so only -4 is free.
+func TestCreateGeneratedSlugSkipsTakenSuffixes(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	createCategory(t, svc, "alpha", "Alpha")
+	seedPost(t, svc, "my-post", "My Post", "alpha", "", 1)
+	seedPost(t, svc, "my-post-2", "My Post Two", "alpha", "", 1)
+	seedPost(t, svc, "my-post-3", "My Post Three", "alpha", "", 1)
+
+	created, err := svc.Create(context.Background(), CreatePostInput{
+		Title:        "My Post",
+		AuthorID:     "user-1",
+		CategorySlug: "alpha",
+		Items:        []ItemInput{{Kind: KindText, BodyText: text("body")}},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Slug != "my-post-4" {
+		t.Fatalf("slug = %q, want my-post-4", created.Slug)
+	}
+}
+
 func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 	mux := newTestMux()
 	userID, token := registerAndLogin(t, mux, "budi")
@@ -567,6 +742,82 @@ func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 	}
 	if stored.ID != created.ID || stored.AuthorID != userID {
 		t.Fatalf("stored post = %+v, want the created post of %q", stored, userID)
+	}
+}
+
+func TestCreateHandlerGeneratesSlugFromTitle(t *testing.T) {
+	mux := newTestMux()
+	_, token := registerAndLogin(t, mux, "budi")
+
+	res := doJSON(t, mux, http.MethodPost, "/categories", `{"slug":"alpha","name":"Alpha"}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("POST /categories status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+
+	// no slug in the body: the server derives one from the title
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{
+		"title": "Setup Claude Code",
+		"category": "alpha",
+		"items": [{"kind": "markdown", "body_text": "# Body"}]
+	}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	var created Post
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode post: %v", err)
+	}
+	if created.Slug != "setup-claude-code" {
+		t.Fatalf("slug = %q, want the generated setup-claude-code", created.Slug)
+	}
+
+	// a second post with the same title takes the next free suffix
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{
+		"title": "Setup Claude Code",
+		"category": "alpha",
+		"items": [{"kind": "text", "body_text": "body"}]
+	}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("second POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	var second Post
+	if err := json.Unmarshal(res.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second post: %v", err)
+	}
+	if second.Slug != "setup-claude-code-2" {
+		t.Fatalf("slug = %q, want setup-claude-code-2", second.Slug)
+	}
+}
+
+// TestCreateHandlerAcceptsDerivativeAsCategory proves category may name a
+// derivative slug: the response links the parent and the derivative.
+func TestCreateHandlerAcceptsDerivativeAsCategory(t *testing.T) {
+	mux := newTestMux()
+	_, token := registerAndLogin(t, mux, "budi")
+
+	res := doJSON(t, mux, http.MethodPost, "/categories", `{"slug":"coding","name":"Coding"}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("POST /categories status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	res = doJSON(t, mux, http.MethodPost, "/categories", `{"slug":"claude-code","name":"Claude Code","parent":"coding"}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("POST derivative status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{
+		"title": "Setup Claude Code",
+		"category": "claude-code",
+		"items": [{"kind": "markdown", "body_text": "# Body"}]
+	}`, token)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	var created Post
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode post: %v", err)
+	}
+	if got := slugsInOrder(created.Categories); got != "coding,claude-code" {
+		t.Fatalf("category slugs = %q, want coding,claude-code", got)
 	}
 }
 

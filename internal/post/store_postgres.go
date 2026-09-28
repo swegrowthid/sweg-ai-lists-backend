@@ -208,6 +208,24 @@ func (s *PostgresStore) FindBySlug(ctx context.Context, slug string) (Post, erro
 	return findBySlug(ctx, s.db, slug)
 }
 
+// Delete implements Store. post_categories and post_items reference posts
+// with ON DELETE CASCADE, so one statement removes the post with its links
+// and items. No matching row is ErrNotFound.
+func (s *PostgresStore) Delete(ctx context.Context, slug string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM posts WHERE slug = $1`, slug)
+	if err != nil {
+		return fmt.Errorf("post: delete: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("post: delete rows: %w", err)
+	}
+	if deleted == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // insertPost writes the post row and returns its generated id.
 func insertPost(ctx context.Context, q querier, input CreatePostInput) (string, error) {
 	var postID string
