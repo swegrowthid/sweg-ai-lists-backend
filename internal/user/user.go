@@ -45,6 +45,14 @@ type LoginInput struct {
 	Password   string
 }
 
+// UpdatePasswordInput is the validated input for the password change use case.
+// UserID comes from the verified access token, never from the request body.
+type UpdatePasswordInput struct {
+	UserID          string
+	CurrentPassword string
+	NewPassword     string
+}
+
 // CreateInput contains the trusted values persisted for a new user.
 type CreateInput struct {
 	Username     string

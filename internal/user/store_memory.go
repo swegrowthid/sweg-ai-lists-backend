@@ -75,3 +75,29 @@ func (m *MemoryStore) List(_ context.Context) ([]User, error) {
 	copy(out, m.users)
 	return out, nil
 }
+
+// FindByID implements Store.
+func (m *MemoryStore) FindByID(_ context.Context, id string) (User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
+// UpdatePasswordHash implements Store. It also bumps UpdatedAt.
+func (m *MemoryStore) UpdatePasswordHash(_ context.Context, id, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, u := range m.users {
+		if u.ID == id {
+			m.users[i].PasswordHash = passwordHash
+			m.users[i].UpdatedAt = time.Now().UTC()
+			return nil
+		}
+	}
+	return ErrNotFound
+}

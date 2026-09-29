@@ -20,6 +20,8 @@ type Store interface {
 	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, input CreateInput) (User, error)
 	FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error)
+	FindByID(ctx context.Context, id string) (User, error)
+	UpdatePasswordHash(ctx context.Context, id, passwordHash string) error
 }
 
 // dummyHash keeps logins with an unknown identifier on the bcrypt path,
@@ -89,4 +91,30 @@ func (s *Service) Authenticate(ctx context.Context, input LoginInput) (User, err
 		return User{}, ErrInvalidCredentials
 	}
 	return u, nil
+}
+
+// UpdatePassword verifies the current password and stores the new hash.
+// A wrong current password returns ErrInvalidCredentials; a missing user
+// returns ErrNotFound. Callers revoke sessions after a successful change.
+func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput) error {
+	if input.UserID == "" || input.CurrentPassword == "" || input.NewPassword == "" || len([]byte(input.NewPassword)) > maxPasswordBytes {
+		return ErrInvalidInput
+	}
+
+	u, err := s.store.FindByID(ctx, input.UserID)
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.CurrentPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcryptCost)
+	if err != nil {
+		return fmt.Errorf("user: hash password: %w", err)
+	}
+	if err := s.store.UpdatePasswordHash(ctx, input.UserID, string(newHash)); err != nil {
+		return err
+	}
+	return nil
 }

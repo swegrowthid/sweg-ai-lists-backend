@@ -155,6 +155,65 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 	}
 }
 
+// TestAppChangePasswordRevokesSessions walks the production graph: register,
+// login, change password, then proves the old refresh token is dead, the old
+// password no longer works, and the new password logs in.
+func TestAppChangePasswordRevokesSessions(t *testing.T) {
+	handler := newTestApp(t).Handler()
+
+	res := doJSON(t, handler, http.MethodPost, "/users/register",
+		`{"username":"pwdtest","email":"pwdtest@example.com","password":"old-password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/auth/login",
+		`{"identifier":"pwdtest","password":"old-password"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var pair auth.Pair
+	if err := json.Unmarshal(res.Body.Bytes(), &pair); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+
+	res = doJSON(t, handler, http.MethodPut, "/users/password",
+		`{"current_password":"old-password","new_password":"new-password"}`, pair.AccessToken)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("change status = %d, want %d; body = %s", res.Code, http.StatusNoContent, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/auth/refresh",
+		`{"refresh_token":"`+pair.RefreshToken+`"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh status = %d, want %d; body = %s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/auth/login",
+		`{"identifier":"pwdtest","password":"old-password"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("old login status = %d, want %d; body = %s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/auth/login",
+		`{"identifier":"pwdtest","password":"new-password"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("new login status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPut, "/users/password",
+		`{"current_password":"wrong","new_password":"another"}`, pair.AccessToken)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current status = %d, want %d; body = %s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPut, "/users/password",
+		`{"current_password":"new-password","new_password":"new-password"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d, want %d; body = %s", res.Code, http.StatusUnauthorized, res.Body.String())
+	}
+}
+
 // TestAppCORSAllowlist proves preflights answer only for configured origins.
 // The static frontend lives on another host, so the browser sends OPTIONS
 // first; unlisted origins fall through to the mux untouched.

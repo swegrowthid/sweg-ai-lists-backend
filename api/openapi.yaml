@@ -89,6 +89,36 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /users/password:
+    put:
+      summary: Ganti password milik sendiri - cabut semua sesi refresh
+      operationId: changePassword
+      tags: [users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password diganti, semua refresh token user dicabut
+        "400":
+          description: Request tidak valid atau password baru tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa; atau password lama salah
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /categories:
     get:
       summary: Daftar category
@@ -460,6 +490,23 @@ components:
           maxLength: 72
           writeOnly: true
           example: secret-password
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          format: password
+          writeOnly: true
+          example: secret-password
+        new_password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 72
+          writeOnly: true
+          example: new-secret-password
     User:
       type: object
       required: [id, username, email, created_at, updated_at]

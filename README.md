@@ -103,6 +103,7 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `GET` | `/readyz` | tidak | Readiness. 503 saat DB down. |
 | `POST` | `/users/register` | tidak | Buat user. Tanpa token keluar. |
 | `GET` | `/users` | ya | Daftar user. |
+| `PUT` | `/users/password` | ya | Ganti password sendiri. Butuh `current_password` + `new_password`. Sukses cabut semua refresh token. |
 | `POST` | `/auth/login` | tidak | Identifier terima username atau email. |
 | `POST` | `/auth/refresh` | tidak | Rotasi refresh token. Token lama mati. |
 | `POST` | `/auth/logout` | tidak | Cabut refresh token. Jawab 204. |

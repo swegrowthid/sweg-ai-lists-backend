@@ -55,7 +55,20 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	userSvc := user.NewService(store)
 	tokens := auth.NewTokens(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 	requireAuth := auth.NewMiddleware(tokens).RequireAuth
-	user.NewHandler(userSvc, log).RegisterRoutes(mux, requireAuth)
+	userHandler := user.NewHandler(userSvc, log)
+	userHandler.SetAuth(
+		func(ctx context.Context) (string, bool) {
+			principal, ok := auth.PrincipalFrom(ctx)
+			if !ok {
+				return "", false
+			}
+			return principal.UserID, true
+		},
+		func(ctx context.Context, userID string) error {
+			return refreshStore.RevokeAllForUser(ctx, userID)
+		},
+	)
+	userHandler.RegisterRoutes(mux, requireAuth)
 	auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log).RegisterRoutes(mux)
 	post.NewHandler(post.NewService(postStore), log).RegisterRoutes(mux, requireAuth)
 

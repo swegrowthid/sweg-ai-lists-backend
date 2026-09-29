@@ -93,3 +93,47 @@ func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
 	}
 	return users, nil
 }
+
+// FindByID implements Store.
+func (s *PostgresStore) FindByID(ctx context.Context, id string) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`, id).Scan(
+		&u.ID,
+		&u.Username,
+		&u.Email,
+		&u.PasswordHash,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("user: find by id: %w", err)
+	}
+	return u, nil
+}
+
+// UpdatePasswordHash implements Store. Zero rows means the user is gone.
+func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, id, passwordHash string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE users
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+	`, id, passwordHash)
+	if err != nil {
+		return fmt.Errorf("user: update password: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("user: update password rows: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
