@@ -87,3 +87,6 @@ protection rules di environment itu bila perlu tinjauan manual.
 - `APP_VERSION` terisi otomatis dari git SHA via `release.env`.
 - Bila `APP_ADDR` bukan port 8080, sesuaikan langkah `Health check`
   di `.github/workflows/ci.yml`.
+- Sync news jalan di dalam proses API, bukan unit systemd terpisah:
+  sekali saat start, lalu tiap 00:00 waktu server. Gagal sync = log warning,
+  daftar news lama tetap tersaji.

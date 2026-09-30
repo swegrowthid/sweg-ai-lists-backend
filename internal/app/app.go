@@ -8,6 +8,7 @@ import (
 
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/auth"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/health"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/news"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/config"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/db"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/docs"
@@ -19,10 +20,11 @@ import (
 // App wires the graph. main passes R in, App builds the graph.
 // Graph: mux -> health.Handler -> health.Service -> db.Pinger.
 type App struct {
-	cfg     config.Config
-	log     *slog.Logger
-	server  *httpserver.Server
-	handler http.Handler
+	cfg           config.Config
+	log           *slog.Logger
+	server        *httpserver.Server
+	handler       http.Handler
+	newsScheduler *news.Scheduler
 }
 
 // New builds App. Nil logger is a programmer bug, so fail fast.
@@ -47,10 +49,12 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	var store user.Store = user.NewMemoryStore()
 	var refreshStore auth.RefreshStore = auth.NewMemoryRefreshStore()
 	var postStore post.Store = post.NewMemoryStore()
+	var newsStore news.Store = news.NewMemoryStore()
 	if pool != nil {
 		store = user.NewPostgresStore(pool.DB)
 		refreshStore = auth.NewPostgresRefreshStore(pool.DB)
 		postStore = post.NewPostgresStore(pool.DB)
+		newsStore = news.NewPostgresStore(pool.DB)
 	}
 	userSvc := user.NewService(store)
 	tokens := auth.NewTokens(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
@@ -72,7 +76,10 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log).RegisterRoutes(mux)
 	post.NewHandler(post.NewService(postStore), log).RegisterRoutes(mux, requireAuth)
 
-	a := &App{cfg: cfg, log: log}
+	newsSvc := news.NewService(newsStore)
+	news.NewHandler(newsSvc, log).RegisterRoutes(mux)
+
+	a := &App{cfg: cfg, log: log, newsScheduler: news.NewScheduler(newsSvc, log)}
 	// Middleware order: log everything, then answer preflights, then route.
 	a.handler = a.withLogging(httpserver.CORS(mux, cfg.CORSOrigins))
 	a.server = httpserver.New(cfg.Addr, a.handler)
@@ -81,6 +88,11 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 
 // Handler exposes the full handler chain for tests. Swap R, same graph.
 func (a *App) Handler() http.Handler { return a.handler }
+
+// RunNewsSync keeps the news list fresh until ctx ends: one sync now, then
+// every day at midnight server time. It blocks, so main starts it in its own
+// goroutine and tests never touch the network.
+func (a *App) RunNewsSync(ctx context.Context) { a.newsScheduler.Run(ctx) }
 
 // Run serves until ctx ends. It blocks. Start/stop lines live in main.
 func (a *App) Run(ctx context.Context) error {

@@ -18,7 +18,7 @@ store_memory.go   adapter in-memory (test, dev)
 http.go           batas HTTP + mapping error ke status
 ```
 
-Paket domain: `user`, `auth`, `post`. Paket `health` hanya service + http.
+Paket domain: `user`, `auth`, `post`, `news`. Paket `health` hanya service + http.
 Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`.
 Wiring graf ada di `internal/app/app.go`. `main` hanya bangun resource lalu jalan.
 
@@ -27,10 +27,12 @@ mux -> health.Handler -> health.Service -> db.Pinger
 mux -> user.Handler -> user.Service -> user.Store
 mux -> auth.Handler -> auth.Service -> user.Service + tokens + RefreshStore
 mux -> post.Handler -> post.Service -> post.Store
+mux -> news.Handler -> news.Service -> news.Store
 ```
 
 Nil pool jatuh ke memory store. Itu dipakai test dan `cmd/memserver`.
 Middleware: log, lalu CORS, lalu route. Tulis butuh Bearer token.
+Sync news jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
 
 ## Struktur
 
@@ -42,6 +44,7 @@ internal/app       wiring graf
 internal/user      register + list user
 internal/auth      login, refresh, logout, middleware JWT
 internal/post      categories + posts
+internal/news      AI Tools Digest dari blog zainfathoni.com
 internal/health    liveness + readiness
 internal/platform  config, db, httpserver, logger, docs, id, validator
 api/openapi.yaml   kontrak API
@@ -112,6 +115,7 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `GET` | `/posts` | tidak | Daftar post, tanpa items. Filter `?category=` dan `?q=`. |
 | `POST` | `/posts` | ya | Buat post. Langsung published. |
 | `GET` | `/posts/{slug}` | tidak | Detail post dengan items urut position. |
+| `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
 | `GET` | `/docs` | tidak | UI Scalar. Mati di prod kecuali `DOCS_UI=1`. |
 | `GET` | `/docs/openapi.yaml` | tidak | Spec. Selalu on. |
 
@@ -156,6 +160,21 @@ Tiga teks 400 menunjuk lapisan gagal:
 | `invalid input` | Validasi service: slug, title, bentuk item, URL, batas. |
 | `unknown category` | Lookup store: slug category atau derivative tidak ada. |
 
+## News
+
+`GET /news` menyajikan daftar post "AI Tools Digest" dari blog
+`https://www.zainfathoni.com/blog`. Tabel `news` menyimpan satu baris per post,
+kuncinya `url` unik, jadi sync ulang tidak pernah menggandakan baris.
+
+Sync jalan di dalam proses API: sekali saat start, lalu tiap hari pukul 00:00
+waktu server. Endpoint tidak pernah memanggil blog. Kalau sync gagal, hasil
+terakhir tetap tersaji dan run berikutnya mencoba lagi.
+
+- Filter: judul kartu listing memuat "AI Tools Digest", tanpa peduli besar-kecil huruf.
+- `published_at` = tengah malam UTC tanggal terbit di kartu listing.
+- Daftar urut terbit terbaru dulu; `summary` boleh string kosong.
+- Sumber atau filter berubah = ubah `internal/news/service.go`, bukan skema.
+
 ## Auth
 
 Login pakai username ATAU email. Email case-insensitive. Salah identifier dan salah password jawab 401 generik yang sama.
@@ -174,6 +193,7 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00004_create_posts.sql` | `posts`, `post_categories`, `post_items`. Index trigram judul. |
 | `00005_add_category_parent.sql` | Kolom `parent_id` + trigger batas depth 2. |
 | `00006_seed_default_categories.sql` | Seed `coding`, `creative`, `presentation`. Idempoten. |
+| `00007_create_news.sql` | Tabel `news`. Kunci unik `url`. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 
@@ -186,6 +206,8 @@ go test ./...
 
 Test pakai store in-memory. Tidak ada test menyentuh DB. `internal/app/app_test.go` tukar semua store ke memory dan tempuh register, login, buat category, buat post, baca detail, list.
 
+Test `internal/news` memakai potongan halaman listing asli di `internal/news/testdata` dan server `httptest`: tanpa jaringan, tanpa DB.
+
 ## Deploy
 
 Lihat `deploy/README.md`. Ringkas alur:
@@ -196,5 +218,7 @@ Lihat `deploy/README.md`. Ringkas alur:
 4. Cek `http://127.0.0.1:8080/readyz`.
 
 Migrasi gagal = API lama tetap jalan. Secrets GitHub: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` wajib. `DEPLOY_PORT`, `DEPLOY_PATH` opsional.
+
+Sync news jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
 
 CI jalan di tiap push dan PR: vet, test, build linux. Job deploy hanya push `main`.

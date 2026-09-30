@@ -313,6 +313,22 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /news:
+    get:
+      summary: Daftar news - post AI Tools Digest dari zainfathoni.com
+      operationId: listNews
+      tags: [news]
+      responses:
+        "200":
+          description: Daftar news terbit terbaru dulu. Diisi sync harian, bukan lewat endpoint tulis.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NewsEntry"
+        "500":
+          description: Galat server
   /auth/login:
     post:
       summary: Login - identifier terima username atau email
@@ -681,6 +697,33 @@ components:
               mime:
                 type: string
                 description: "Opsional untuk kind file. Default text/markdown."
+    NewsEntry:
+      type: object
+      required: [id, title, url, summary, published_at, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: "Pintar, Murah, atau Terlihat Kerjanya? — AI Tools Digest #35"
+        url:
+          type: string
+          format: uri
+          description: URL post asli di blog sumber. Kunci unik baris ini.
+        summary:
+          type: string
+          description: Ringkasan dari kartu listing sumber. Boleh string kosong.
+        published_at:
+          type: string
+          format: date-time
+          description: Tengah malam UTC dari tanggal terbit kartu sumber.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 tags:
   - name: users
     description: Data user komunitas.
@@ -690,3 +733,5 @@ tags:
     description: Kategori post, mis. coding agent.
   - name: posts
     description: Post setting AI coding agent.
+  - name: news
+    description: News AI Tools Digest dari blog zainfathoni.com, diisi sync harian.

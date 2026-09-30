@@ -34,6 +34,9 @@ func main() {
 
 	log.Info("starting", "addr", cfg.Addr)
 	a := app.New(cfg, log, pool)
+	// News refresh runs beside the server: one sync now, then daily at
+	// midnight server time. Failures are logged, never fatal.
+	go a.RunNewsSync(ctx)
 	if err := a.Run(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "error", err)
 		os.Exit(1)

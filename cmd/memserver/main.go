@@ -24,5 +24,9 @@ func main() {
 		CORSOrigins:   []string{"http://localhost:4321"},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_ = app.New(cfg, log, nil).Run(context.Background())
+	ctx := context.Background()
+	a := app.New(cfg, log, nil)
+	// Same graph as cmd/api: sync the news list now, then daily.
+	go a.RunNewsSync(ctx)
+	_ = a.Run(ctx)
 }

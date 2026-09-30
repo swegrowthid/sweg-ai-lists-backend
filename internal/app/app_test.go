@@ -214,6 +214,20 @@ func TestAppChangePasswordRevokesSessions(t *testing.T) {
 	}
 }
 
+// TestAppNewsRouteIsServed proves the news route rides the production graph.
+// With memory stores the list starts empty, so the endpoint answers [].
+func TestAppNewsRouteIsServed(t *testing.T) {
+	handler := newTestApp(t).Handler()
+
+	res := doJSON(t, handler, http.MethodGet, "/news", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("news status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
+		t.Fatalf("news body = %q, want an empty list", body)
+	}
+}
+
 // TestAppCORSAllowlist proves preflights answer only for configured origins.
 // The static frontend lives on another host, so the browser sends OPTIONS
 // first; unlisted origins fall through to the mux untouched.
