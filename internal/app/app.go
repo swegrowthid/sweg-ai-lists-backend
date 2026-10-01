@@ -14,17 +14,19 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/docs"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/httpserver"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/post"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/tools"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
 )
 
 // App wires the graph. main passes R in, App builds the graph.
 // Graph: mux -> health.Handler -> health.Service -> db.Pinger.
 type App struct {
-	cfg           config.Config
-	log           *slog.Logger
-	server        *httpserver.Server
-	handler       http.Handler
-	newsScheduler *news.Scheduler
+	cfg            config.Config
+	log            *slog.Logger
+	server         *httpserver.Server
+	handler        http.Handler
+	newsScheduler  *news.Scheduler
+	toolsScheduler *tools.Scheduler
 }
 
 // New builds App. Nil logger is a programmer bug, so fail fast.
@@ -79,7 +81,17 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	newsSvc := news.NewService(newsStore)
 	news.NewHandler(newsSvc, log).RegisterRoutes(mux)
 
-	a := &App{cfg: cfg, log: log, newsScheduler: news.NewScheduler(newsSvc, log)}
+	// Tools catalog has no Postgres adapter: the source markdown files are the
+	// database, the store holds only the parsed snapshot.
+	toolsSvc := tools.NewService(tools.NewMemoryStore())
+	tools.NewHandler(toolsSvc, log).RegisterRoutes(mux)
+
+	a := &App{
+		cfg:            cfg,
+		log:            log,
+		newsScheduler:  news.NewScheduler(newsSvc, log),
+		toolsScheduler: tools.NewScheduler(toolsSvc, log),
+	}
 	// Middleware order: log everything, then answer preflights, then route.
 	a.handler = a.withLogging(httpserver.CORS(mux, cfg.CORSOrigins))
 	a.server = httpserver.New(cfg.Addr, a.handler)
@@ -93,6 +105,11 @@ func (a *App) Handler() http.Handler { return a.handler }
 // every day at midnight server time. It blocks, so main starts it in its own
 // goroutine and tests never touch the network.
 func (a *App) RunNewsSync(ctx context.Context) { a.newsScheduler.Run(ctx) }
+
+// RunToolsSync keeps the tools snapshot fresh until ctx ends: one sync now,
+// then every day at midnight server time. It blocks, so main starts it in
+// its own goroutine and tests never touch the network.
+func (a *App) RunToolsSync(ctx context.Context) { a.toolsScheduler.Run(ctx) }
 
 // Run serves until ctx ends. It blocks. Start/stop lines live in main.
 func (a *App) Run(ctx context.Context) error {

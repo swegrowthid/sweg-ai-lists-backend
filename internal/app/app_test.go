@@ -228,6 +228,36 @@ func TestAppNewsRouteIsServed(t *testing.T) {
 	}
 }
 
+// TestAppToolsRoutesAreServed proves the tools routes ride the production
+// graph. With an empty snapshot the list answers [] and the static category
+// mapping still answers with count 0.
+func TestAppToolsRoutesAreServed(t *testing.T) {
+	handler := newTestApp(t).Handler()
+
+	res := doJSON(t, handler, http.MethodGet, "/tools", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("tools status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
+		t.Fatalf("tools body = %q, want an empty list", body)
+	}
+
+	res = doJSON(t, handler, http.MethodGet, "/tools/categories", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("tools categories status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var cats []struct {
+		Slug  string `json:"slug"`
+		Count int    `json:"count"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &cats); err != nil {
+		t.Fatalf("decode tools categories: %v", err)
+	}
+	if len(cats) != 3 || cats[0].Slug != "providers" || cats[0].Count != 0 {
+		t.Fatalf("tools categories = %+v, want 3 rows with count 0", cats)
+	}
+}
+
 // TestAppCORSAllowlist proves preflights answer only for configured origins.
 // The static frontend lives on another host, so the browser sends OPTIONS
 // first; unlisted origins fall through to the mux untouched.

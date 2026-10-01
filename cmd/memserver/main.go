@@ -26,7 +26,8 @@ func main() {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
 	a := app.New(cfg, log, nil)
-	// Same graph as cmd/api: sync the news list now, then daily.
+	// Same graph as cmd/api: sync the news and tools lists now, then daily.
 	go a.RunNewsSync(ctx)
+	go a.RunToolsSync(ctx)
 	_ = a.Run(ctx)
 }

@@ -18,7 +18,7 @@ store_memory.go   adapter in-memory (test, dev)
 http.go           batas HTTP + mapping error ke status
 ```
 
-Paket domain: `user`, `auth`, `post`, `news`. Paket `health` hanya service + http.
+Paket domain: `user`, `auth`, `post`, `news`, `tools`. Paket `health` hanya service + http.
 Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`.
 Wiring graf ada di `internal/app/app.go`. `main` hanya bangun resource lalu jalan.
 
@@ -28,11 +28,12 @@ mux -> user.Handler -> user.Service -> user.Store
 mux -> auth.Handler -> auth.Service -> user.Service + tokens + RefreshStore
 mux -> post.Handler -> post.Service -> post.Store
 mux -> news.Handler -> news.Service -> news.Store
+mux -> tools.Handler -> tools.Service -> tools.Store
 ```
 
 Nil pool jatuh ke memory store. Itu dipakai test dan `cmd/memserver`.
 Middleware: log, lalu CORS, lalu route. Tulis butuh Bearer token.
-Sync news jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
+Sync news dan tools jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
 
 ## Struktur
 
@@ -45,6 +46,7 @@ internal/user      register + list user
 internal/auth      login, refresh, logout, middleware JWT
 internal/post      categories + posts
 internal/news      AI Tools Digest dari blog zainfathoni.com
+internal/tools     katalog tools AI dari markdown tools-ai-swe-growth
 internal/health    liveness + readiness
 internal/platform  config, db, httpserver, logger, docs, id, validator
 api/openapi.yaml   kontrak API
@@ -116,6 +118,9 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `POST` | `/posts` | ya | Buat post. Langsung published. |
 | `GET` | `/posts/{slug}` | tidak | Detail post dengan items urut position. |
 | `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
+| `GET` | `/tools` | tidak | Daftar tools AI urut katalog. Filter `?category=` dan `?q=`. |
+| `GET` | `/tools/categories` | tidak | Mapping kategori tools: slug, prefix, file sumber, count. |
+| `GET` | `/tools/{id}` | tidak | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. |
 | `GET` | `/docs` | tidak | UI Scalar. Mati di prod kecuali `DOCS_UI=1`. |
 | `GET` | `/docs/openapi.yaml` | tidak | Spec. Selalu on. |
 
@@ -175,6 +180,30 @@ terakhir tetap tersaji dan run berikutnya mencoba lagi.
 - Daftar urut terbit terbaru dulu; `summary` boleh string kosong.
 - Sumber atau filter berubah = ubah `internal/news/service.go`, bukan skema.
 
+## Tools
+
+`GET /tools` menyajikan katalog tools AI dari repo
+`github.com/swegrowthid/tools-ai-swe-growth`. Tiga file markdown di repo itu
+adalah databasenya: `providers.md`, `codingagents.md`, `ade.md`. Tidak ada
+tabel SQL untuk katalog - parser membaca tabel markdown dan menyimpan hasilnya
+sebagai snapshot in-memory, lalu sync menggantinya atomik.
+
+Sync berjalan di dalam proses API: sekali saat start, lalu tiap hari pukul
+00:00 waktu server. Endpoint tidak pernah memanggil GitHub. Kalau sync gagal,
+snapshot terakhir tetap tersaji dan run berikutnya mencoba lagi.
+
+- `GET /tools/categories` menjawab mapping: `providers` (prefix `P`,
+  `providers.md`), `coding-agents` (`CA`, `codingagents.md`), `ade` (`ADE`,
+  `ade.md`), plus `count` baris hasil sync terakhir.
+- `?category=` terima slug atau prefix, case-insensitive: `providers` = `p`.
+- `?q=` cocokkan substring nama tool, case-insensitive.
+- Field per kategori: providers membawa `top_up`, `subscribe`, `min_spend`;
+  ade membawa `ai_features`. Field milik kategori lain tidak muncul di JSON.
+- `status` dinormalisasi lowercase tanpa emoji; `updated` jadi `YYYY-MM-DD`.
+- Satu baris rusak tidak membatalkan file; file tanpa tabel ID membatalkan
+  seluruh sync sehingga kategori tidak pernah kosong separuh.
+- Sumber atau kolom berubah = ubah `internal/tools/parser.go`, bukan skema.
+
 ## Auth
 
 Login pakai username ATAU email. Email case-insensitive. Salah identifier dan salah password jawab 401 generik yang sama.
@@ -219,6 +248,6 @@ Lihat `deploy/README.md`. Ringkas alur:
 
 Migrasi gagal = API lama tetap jalan. Secrets GitHub: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` wajib. `DEPLOY_PORT`, `DEPLOY_PATH` opsional.
 
-Sync news jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
+Sync news dan tools jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
 
 CI jalan di tiap push dan PR: vet, test, build linux. Job deploy hanya push `main`.

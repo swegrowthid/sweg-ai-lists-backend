@@ -329,6 +329,88 @@ paths:
                   $ref: "#/components/schemas/NewsEntry"
         "500":
           description: Galat server
+  /tools:
+    get:
+      summary: Daftar tools AI dari repo tools-ai-swe-growth
+      operationId: listTools
+      tags: [tools]
+      parameters:
+        - name: category
+          in: query
+          required: false
+          description: Filter kategori. Terima slug atau prefix id, case-insensitive.
+          schema:
+            type: string
+            enum: [providers, coding-agents, ade, p, ca]
+          example: providers
+        - name: q
+          in: query
+          required: false
+          description: Cari pada nama tool, case-insensitive.
+          schema:
+            type: string
+          example: cursor
+      responses:
+        "200":
+          description: Daftar tool urut katalog, kategori dulu lalu urutan file sumber
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tool"
+        "400":
+          description: Filter tidak valid, misalnya category tak dikenal atau q memuat byte NUL
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /tools/categories:
+    get:
+      summary: Mapping kategori tools - slug, nama, prefix, file sumber, jumlah baris
+      operationId: listToolCategories
+      tags: [tools]
+      responses:
+        "200":
+          description: Daftar 3 kategori tools beserta jumlah baris hasil sync terakhir
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolCategory"
+        "500":
+          description: Galat server
+  /tools/{id}:
+    get:
+      summary: Detail satu tool berdasarkan id sumber
+      operationId: getTool
+      tags: [tools]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id tool dari tabel sumber, case-insensitive.
+          schema:
+            type: string
+          example: P-001
+      responses:
+        "200":
+          description: Satu tool dari snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tool"
+        "404":
+          description: Tool tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /auth/login:
     post:
       summary: Login - identifier terima username atau email
@@ -724,6 +806,78 @@ components:
         updated_at:
           type: string
           format: date-time
+    ToolCategory:
+      type: object
+      required: [slug, name, prefix, source_file, source_url, count]
+      properties:
+        slug:
+          type: string
+          example: providers
+        name:
+          type: string
+          example: Providers
+        prefix:
+          type: string
+          description: Prefix id baris di tabel sumber.
+          example: P
+        source_file:
+          type: string
+          description: Nama file markdown di repo tools-ai-swe-growth.
+          example: providers.md
+        source_url:
+          type: string
+          format: uri
+          description: Halaman GitHub file sumber untuk dibaca manusia.
+        count:
+          type: integer
+          description: Jumlah baris pada snapshot sync terakhir. 0 sebelum sync pertama.
+    Tool:
+      type: object
+      required: [id, category, name, website, website_label, status, updated]
+      properties:
+        id:
+          type: string
+          description: Id dari tabel sumber, bentuk PREFIX-NNN.
+          example: P-001
+        category:
+          type: string
+          enum: [providers, coding-agents, ade]
+        name:
+          type: string
+          example: OpenAI
+        website:
+          type: string
+          format: uri
+          description: URL dari sel Website sumber. Kosong bila sel bukan link.
+          example: https://openai.com
+        website_label:
+          type: string
+          description: Teks tampil dari sel Website sumber.
+          example: openai.com
+        status:
+          type: string
+          description: Status lowercase dari sumber, emoji dibuang.
+          example: active
+        updated:
+          type: string
+          description: Tanggal update sumber YYYY-MM-DD. Teks mentah bila sumber menyimpan format lain.
+          example: "2026-07-12"
+        top_up:
+          type: boolean
+          description: Hanya kategori providers. Absen pada kategori lain.
+        subscribe:
+          type: boolean
+          description: Hanya kategori providers. Absen pada kategori lain.
+        min_spend:
+          type: string
+          description: Hanya kategori providers. Teks mentah sel Min Spend.
+          example: $5 (top up)
+        ai_features:
+          type: array
+          description: Hanya kategori ade. Daftar fitur dari sel AI Features.
+          items:
+            type: string
+          example: ["Chat", "Agent"]
 tags:
   - name: users
     description: Data user komunitas.
@@ -735,3 +889,5 @@ tags:
     description: Post setting AI coding agent.
   - name: news
     description: News AI Tools Digest dari blog zainfathoni.com, diisi sync harian.
+  - name: tools
+    description: Katalog tools AI dari markdown repo tools-ai-swe-growth, diisi sync harian.
