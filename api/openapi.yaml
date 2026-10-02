@@ -335,10 +335,21 @@ paths:
       operationId: listTools
       tags: [tools]
       parameters:
+        - name: group
+          in: query
+          required: false
+          description: >-
+            Filter grup. `all` mengembalikan tiap kategori. Nilai lain memilih satu
+            grup. Parameter ini sama fungsinya dengan `category`.
+          schema:
+            type: string
+            enum: [all, ade, provider, coding-agent]
+            default: all
+          example: provider
         - name: category
           in: query
           required: false
-          description: Filter kategori. Terima slug atau prefix id, case-insensitive.
+          description: Nama lama untuk `group`. Terima slug atau prefix id, case-insensitive.
           schema:
             type: string
             enum: [providers, coding-agents, ade, p, ca]
@@ -350,17 +361,60 @@ paths:
           schema:
             type: string
           example: cursor
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            Kunci urutan. Tanpa parameter ini baris tetap urut katalog sumber.
+            `updated` memakai tanggal update sumber. Tanggal itu satu-satunya
+            stempel waktu di katalog, jadi ia mewakili waktu tambah dan ubah.
+          schema:
+            type: string
+            enum: [name, updated]
+          example: name
+        - name: order
+          in: query
+          required: false
+          description: Arah urutan. Hanya berlaku bila `sort` terisi. Default asc.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          example: desc
+        - name: page
+          in: query
+          required: false
+          description: Nomor halaman, mulai dari 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 2
+        - name: per_page
+          in: query
+          required: false
+          description: Jumlah baris per halaman. Nilai di luar 1..100 ditolak.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 50
       responses:
         "200":
-          description: Daftar tool urut katalog, kategori dulu lalu urutan file sumber
+          description: >-
+            Satu halaman tool plus meta paging. `meta.total` menghitung seluruh baris
+            yang cocok dengan filter, bukan hanya baris pada halaman ini. Halaman
+            kosong tetap membawa meta, jadi klien bisa membedakan "habis" dari
+            "tidak ada yang cocok".
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Tool"
+                $ref: "#/components/schemas/ToolList"
         "400":
-          description: Filter tidak valid, misalnya category tak dikenal atau q memuat byte NUL
+          description: >-
+            Parameter tidak valid. Contoh: group tak dikenal, sort atau order tak
+            didukung, page di bawah 1, per_page di luar 1..100, atau q memuat byte NUL.
           content:
             text/plain:
               schema:
@@ -878,6 +932,37 @@ components:
           items:
             type: string
           example: ["Chat", "Agent"]
+    PageMeta:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page:
+          type: integer
+          description: Nomor halaman yang sedang dikirim, mulai dari 1.
+          example: 1
+        per_page:
+          type: integer
+          description: Jumlah baris maksimal per halaman yang dipakai server.
+          example: 20
+        total:
+          type: integer
+          description: Jumlah seluruh baris yang cocok dengan filter, semua halaman.
+          example: 259
+        total_pages:
+          type: integer
+          description: Jumlah halaman dari total dengan per_page ini. 0 bila tidak ada baris.
+          example: 13
+    ToolList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          description: Baris pada halaman ini, urut sesuai parameter sort dan order.
+          items:
+            $ref: "#/components/schemas/Tool"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
 tags:
   - name: users
     description: Data user komunitas.

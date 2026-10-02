@@ -229,8 +229,8 @@ func TestAppNewsRouteIsServed(t *testing.T) {
 }
 
 // TestAppToolsRoutesAreServed proves the tools routes ride the production
-// graph. With an empty snapshot the list answers [] and the static category
-// mapping still answers with count 0.
+// graph. With an empty snapshot the list answers an empty page and the static
+// category mapping still answers with count 0.
 func TestAppToolsRoutesAreServed(t *testing.T) {
 	handler := newTestApp(t).Handler()
 
@@ -238,8 +238,22 @@ func TestAppToolsRoutesAreServed(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("tools status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
-		t.Fatalf("tools body = %q, want an empty list", body)
+	var page struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		Meta struct {
+			Page       int `json:"page"`
+			PerPage    int `json:"per_page"`
+			Total      int `json:"total"`
+			TotalPages int `json:"total_pages"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode tools list: %v", err)
+	}
+	if len(page.Data) != 0 || page.Meta.Total != 0 || page.Meta.Page != 1 {
+		t.Fatalf("tools body = %s, want page 1 of an empty catalog", res.Body.String())
 	}
 
 	res = doJSON(t, handler, http.MethodGet, "/tools/categories", "", "")

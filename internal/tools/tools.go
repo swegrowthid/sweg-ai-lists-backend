@@ -34,11 +34,63 @@ type Category struct {
 	Count      int    `json:"count"`
 }
 
-// ListFilter narrows the catalog list. Category is a slug; Query is a
-// case-insensitive substring on the tool name.
+// Sort keys accepted by ListFilter.Sort. An empty key keeps the source
+// catalog order instead of reordering the snapshot.
+const (
+	// SortName orders by the tool name, case-insensitive.
+	SortName = "name"
+	// SortUpdated orders by the source updated date, YYYY-MM-DD.
+	SortUpdated = "updated"
+)
+
+// Sort directions accepted by ListFilter.Order.
+const (
+	// OrderAsc is oldest/smallest first.
+	OrderAsc = "asc"
+	// OrderDesc is newest/largest first.
+	OrderDesc = "desc"
+)
+
+// Paging bounds for ListFilter.PerPage.
+const (
+	// DefaultPerPage is the page size when the client sends none.
+	DefaultPerPage = 20
+	// MaxPerPage is the largest page size the catalog will serve.
+	MaxPerPage = 100
+)
+
+// ListFilter narrows and shapes the catalog list. Category holds a group name
+// or a category slug; Query is a case-insensitive substring on the tool name.
+// Sort and Order are empty for source catalog order, otherwise SortName or
+// SortUpdated paired with OrderAsc or OrderDesc. Page is 1-based and PerPage is
+// capped at MaxPerPage; both default when left at zero.
 type ListFilter struct {
 	Category string
 	Query    string
+	Sort     string
+	Order    string
+	Page     int
+	PerPage  int
+}
+
+// PageMeta describes the page a list response carries.
+type PageMeta struct {
+	// Page is the 1-based page number being served.
+	Page int `json:"page"`
+	// PerPage is the page size the server applied.
+	PerPage int `json:"per_page"`
+	// Total is how many rows match the filter, across every page.
+	Total int `json:"total"`
+	// TotalPages is how many pages Total makes at PerPage.
+	TotalPages int `json:"total_pages"`
+}
+
+// ListResult is the GET /tools body: one page of rows plus paging metadata.
+// The envelope is always present, even on an empty page, so a client can read
+// the total without guessing whether there is more to fetch.
+type ListResult struct {
+	Data []Tool   `json:"data"`
+	Meta PageMeta `json:"meta"`
 }
 
 // Sentinel errors for the E channel. Handlers map them to status codes.

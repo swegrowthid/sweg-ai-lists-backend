@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // Handler maps Service results to HTTP. It owns status codes.
@@ -34,19 +35,48 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// `group` is the documented spelling; `category` is the older name for the
+	// same filter and still resolves through the service.
+	group := q.Get("group")
+	if group == "" {
+		group = q.Get("category")
+	}
 	filter := ListFilter{
-		Category: r.URL.Query().Get("category"),
-		Query:    r.URL.Query().Get("q"),
+		Category: group,
+		Query:    q.Get("q"),
+		Sort:     q.Get("sort"),
+		Order:    q.Get("order"),
+	}
+	var err error
+	if filter.Page, err = pageParam(q.Get("page")); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if filter.PerPage, err = pageParam(q.Get("per_page")); err != nil {
+		h.writeError(w, r, err)
+		return
 	}
 	list, err := h.svc.List(r.Context(), filter)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	if list == nil {
-		list = []Tool{}
-	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// pageParam parses one optional paging integer. An absent parameter yields 0,
+// which the service replaces with its default. Anything else must be a positive
+// integer.
+func pageParam(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, ErrInvalidInput
+	}
+	return n, nil
 }
 
 func (h *Handler) categories(w http.ResponseWriter, r *http.Request) {

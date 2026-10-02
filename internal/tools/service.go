@@ -78,20 +78,27 @@ func newServiceWithSource(store Store, src source) *Service {
 	return &Service{store: store, source: src}
 }
 
-// List validates the filter and returns the snapshot in catalog order.
-func (s *Service) List(ctx context.Context, filter ListFilter) ([]Tool, error) {
+// List validates the filter, orders the snapshot as asked, and returns one
+// page of it together with the metadata a client needs to fetch the next one.
+func (s *Service) List(ctx context.Context, filter ListFilter) (ListResult, error) {
 	if strings.ContainsRune(filter.Query, 0) || strings.ContainsRune(filter.Category, 0) {
-		return nil, ErrInvalidInput
+		return ListResult{}, ErrInvalidInput
 	}
-	if filter.Category != "" {
-		resolved, ok := resolveCategory(filter.Category)
-		if !ok {
-			return nil, ErrUnknownCategory
-		}
-		filter.Category = resolved.slug
+	slug, ok := resolveCategory(filter.Category)
+	if !ok {
+		return ListResult{}, ErrUnknownCategory
+	}
+	filter.Category = slug
+	if err := normalizeListOptions(&filter); err != nil {
+		return ListResult{}, err
 	}
 	filter.Query = strings.ToLower(strings.TrimSpace(filter.Query))
-	return s.store.List(ctx, filter)
+
+	rows, err := s.store.List(ctx, filter)
+	if err != nil {
+		return ListResult{}, err
+	}
+	return pageRows(rows, filter.Page, filter.PerPage), nil
 }
 
 // Get returns one tool by id, case-insensitive (p-001 finds P-001).
@@ -172,15 +179,81 @@ func (s *Service) fetchFile(ctx context.Context, cat categoryDef) ([]Tool, error
 	return parseTools(bytes.NewReader(body), cat)
 }
 
-// resolveCategory maps a slug or an id prefix (both case-insensitive) to its
-// category definition. "?category=p" and "?category=providers" are the same
-// filter.
-func resolveCategory(raw string) (categoryDef, bool) {
+// resolveCategory maps a group name, a category slug, or an id prefix to the
+// category slug the store filters on. Every spelling is case-insensitive, so
+// "?group=coding_agent" and "?category=ca" select the same rows. "all" and the
+// empty string mean no filter at all.
+func resolveCategory(raw string) (string, bool) {
 	raw = strings.ToLower(strings.TrimSpace(raw))
+	switch raw {
+	case "", "all":
+		return "", true
+	case "provider":
+		return "providers", true
+	case "coding-agent", "coding_agent", "coding agent":
+		return "coding-agents", true
+	}
 	for _, def := range categories {
 		if raw == def.slug || raw == strings.ToLower(def.prefix) {
-			return def, true
+			return def.slug, true
 		}
 	}
-	return categoryDef{}, false
+	return "", false
+}
+
+// normalizeListOptions fills the paging defaults and rejects a sort, order, or
+// page size the catalog cannot serve. A lone Order is dropped: there is no key
+// to order by yet.
+func normalizeListOptions(filter *ListFilter) error {
+	switch filter.Sort {
+	case "":
+		filter.Order = ""
+	case SortName, SortUpdated:
+		if filter.Order == "" {
+			filter.Order = OrderAsc
+		}
+		if filter.Order != OrderAsc && filter.Order != OrderDesc {
+			return ErrInvalidInput
+		}
+	default:
+		return ErrInvalidInput
+	}
+
+	if filter.Page == 0 {
+		filter.Page = 1
+	}
+	if filter.Page < 1 {
+		return ErrInvalidInput
+	}
+	if filter.PerPage == 0 {
+		filter.PerPage = DefaultPerPage
+	}
+	if filter.PerPage < 1 || filter.PerPage > MaxPerPage {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+// pageRows cuts one page out of the ordered rows and reports the metadata for
+// the whole result set. A page past the end is empty but still carries the
+// total, so the client can tell "no more rows" from "nothing matched".
+func pageRows(rows []Tool, page, perPage int) ListResult {
+	total := len(rows)
+	meta := PageMeta{
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: (total + perPage - 1) / perPage,
+	}
+	// The early return keeps a huge page number from overflowing the slice
+	// offsets below.
+	if page > meta.TotalPages {
+		return ListResult{Data: []Tool{}, Meta: meta}
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return ListResult{Data: rows[start:end], Meta: meta}
 }

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -36,7 +37,8 @@ func (m *MemoryStore) ReplaceAll(_ context.Context, tools []Tool) error {
 }
 
 // List implements Store. The snapshot keeps catalog order: category order
-// first, then file order inside each category.
+// first, then file order inside each category. A Sort on the filter reorders
+// the match instead.
 func (m *MemoryStore) List(_ context.Context, filter ListFilter) ([]Tool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -51,7 +53,38 @@ func (m *MemoryStore) List(_ context.Context, filter ListFilter) ([]Tool, error)
 		}
 		out = append(out, tool)
 	}
+	sortTools(out, filter.Sort, filter.Order)
 	return out, nil
+}
+
+// sortTools orders rows by the requested key, or leaves catalog order alone
+// when the key is empty. Rows that tie on the key order by id ascending in both
+// directions, so a page boundary never repeats or drops a row.
+func sortTools(rows []Tool, by, order string) {
+	if by == "" {
+		return
+	}
+	desc := order == OrderDesc
+	sort.SliceStable(rows, func(i, j int) bool {
+		cmp := compareToolKey(rows[i], rows[j], by)
+		if cmp == 0 {
+			return rows[i].ID < rows[j].ID
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+// compareToolKey orders two rows by the sort key alone. The updated column is
+// a YYYY-MM-DD text, so a plain string compare sorts it chronologically; source
+// text the parser could not turn into a date sorts along with it.
+func compareToolKey(a, b Tool, by string) int {
+	if by == SortUpdated {
+		return strings.Compare(a.Updated, b.Updated)
+	}
+	return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 }
 
 // Get implements Store. The id is already normalized by the service.
