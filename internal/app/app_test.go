@@ -25,7 +25,7 @@ func newTestApp(t *testing.T) *App {
 		Env:           "test",
 		Version:       "test",
 		JWTSecret:     "test-secret-for-app-tests",
-		JWTAccessTTL:  15 * time.Minute,
+		JWTAccessTTL:  24 * time.Hour,
 		JWTRefreshTTL: 24 * time.Hour,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -281,7 +281,7 @@ func TestAppCORSAllowlist(t *testing.T) {
 		Env:           "test",
 		Version:       "test",
 		JWTSecret:     "test-secret-for-app-tests",
-		JWTAccessTTL:  15 * time.Minute,
+		JWTAccessTTL:  24 * time.Hour,
 		JWTRefreshTTL: 24 * time.Hour,
 		CORSOrigins:   []string{"https://ai-sweg.my.id"},
 	}

@@ -613,8 +613,8 @@ components:
           example: Bearer
         expires_in:
           type: integer
-          description: Umur access token dalam detik
-          example: 900
+          description: Umur access token dalam detik (24 jam)
+          example: 86400
         refresh_token:
           type: string
           description: JWT HS256 satu kali pakai, rotasi di /auth/refresh

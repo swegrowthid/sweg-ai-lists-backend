@@ -58,7 +58,7 @@ func Load() Config {
 		DocsUI:        boolEnv("DOCS_UI", env != "prod"),
 		CORSOrigins:   listEnv("CORS_ORIGINS"),
 		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
-		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 15*time.Minute),
+		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 24*time.Hour),
 		JWTRefreshTTL: durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
 	}
 }

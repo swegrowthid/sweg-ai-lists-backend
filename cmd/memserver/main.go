@@ -19,7 +19,7 @@ func main() {
 		Service:       "sweg-ai-mem",
 		Version:       "dev",
 		JWTSecret:     "dev-secret",
-		JWTAccessTTL:  15 * time.Minute,
+		JWTAccessTTL:  24 * time.Hour,
 		JWTRefreshTTL: 24 * time.Hour,
 		CORSOrigins:   []string{"http://localhost:4321"},
 	}

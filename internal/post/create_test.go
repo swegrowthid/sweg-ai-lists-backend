@@ -27,7 +27,7 @@ func newTestMux() *http.ServeMux {
 // inspect it while every request still travels the full handler path.
 func newTestMuxWithStore() (*http.ServeMux, *MemoryStore) {
 	userSvc := user.NewService(user.NewMemoryStore())
-	tokens := auth.NewTokens(testSecret, 15*time.Minute, 24*time.Hour)
+	tokens := auth.NewTokens(testSecret, 24*time.Hour, 24*time.Hour)
 	requireAuth := auth.NewMiddleware(tokens).RequireAuth
 
 	store := NewMemoryStore()

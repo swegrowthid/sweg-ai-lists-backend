@@ -88,7 +88,7 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | --- | --- | --- |
 | `DB_URL` | kosong | URL Postgres penuh. Kosong = boot gagal. |
 | `JWT_SECRET` | kosong | Secret HS256. Kosong = boot panic. |
-| `JWT_ACCESS_TTL` | `15m` | Umur access token. |
+| `JWT_ACCESS_TTL` | `24h` | Umur access token. |
 | `JWT_REFRESH_TTL` | `168h` | Umur refresh token. |
 | `APP_ADDR` | `:8080` | Alamat listen. |
 | `APP_ENV` | `dev` | `prod` mematikan `/docs` kecuali `DOCS_UI=1`. |

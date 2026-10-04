@@ -17,7 +17,7 @@ const testSecret = "test-secret-for-auth-tests"
 func newTestMux() *http.ServeMux {
 	store := user.NewMemoryStore()
 	userSvc := user.NewService(store)
-	tokens := NewTokens(testSecret, 15*time.Minute, 24*time.Hour)
+	tokens := NewTokens(testSecret, 24*time.Hour, 24*time.Hour)
 	mux := http.NewServeMux()
 	user.NewHandler(userSvc, nil).RegisterRoutes(mux, NewMiddleware(tokens).RequireAuth)
 	NewHandler(NewService(userSvc, tokens, NewMemoryRefreshStore()), nil).RegisterRoutes(mux)
@@ -245,5 +245,24 @@ func TestAccessTokenCannotRefresh(t *testing.T) {
 		`{"refresh_token":"`+pair.AccessToken+`"}`, "")
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("access token as refresh status = %d, want %d", res.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAccessTokenExpiresAfter24Hours(t *testing.T) {
+	tokens := NewTokens(testSecret, 24*time.Hour, 24*time.Hour)
+	pair, _, err := tokens.Issue("uid-1", "budi")
+	if err != nil {
+		t.Fatalf("issue token pair: %v", err)
+	}
+	claims, err := tokens.ParseAccess(pair.AccessToken)
+	if err != nil {
+		t.Fatalf("parse fresh access token: %v", err)
+	}
+	lifetime := time.Until(claims.ExpiresAt.Time)
+	if lifetime <= 23*time.Hour || lifetime > 24*time.Hour {
+		t.Fatalf("access token lifetime = %v, want about 24h", lifetime)
+	}
+	if pair.ExpiresIn <= int64((23*time.Hour).Seconds()) || pair.ExpiresIn > int64((24*time.Hour).Seconds()) {
+		t.Fatalf("expires_in = %d, want about 86400 seconds", pair.ExpiresIn)
 	}
 }
