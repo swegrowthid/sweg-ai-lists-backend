@@ -175,9 +175,10 @@ func (s *PostgresStore) Create(ctx context.Context, input CreatePostInput) (Post
 // stay out on purpose, so list payloads stay small.
 func (s *PostgresStore) List(ctx context.Context, filter ListFilter) ([]Post, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.slug, p.title, p.author_id, p.created_at, p.updated_at,
+		SELECT p.id, p.slug, p.title, p.author_id, u.username, p.created_at, p.updated_at,
 		       c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
 		FROM posts p
+		JOIN users u ON u.id = p.author_id
 		JOIN post_categories pc ON pc.post_id = p.id
 		JOIN categories c ON c.id = pc.category_id
 		LEFT JOIN categories parent ON parent.id = c.parent_id
@@ -293,9 +294,10 @@ func insertItems(ctx context.Context, q querier, postID string, items []ItemInpu
 // no matching row is ErrNotFound.
 func findBySlug(ctx context.Context, q querier, slug string) (Post, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT p.id, p.slug, p.title, p.author_id, p.created_at, p.updated_at,
+		SELECT p.id, p.slug, p.title, p.author_id, u.username, p.created_at, p.updated_at,
 		       c.id, c.slug, c.name, parent.slug, c.created_at, c.updated_at
 		FROM posts p
+		JOIN users u ON u.id = p.author_id
 		JOIN post_categories pc ON pc.post_id = p.id
 		JOIN categories c ON c.id = pc.category_id
 		LEFT JOIN categories parent ON parent.id = c.parent_id
@@ -370,7 +372,7 @@ func scanPosts(rows *sql.Rows) ([]Post, error) {
 			category Category
 		)
 		if err := rows.Scan(
-			&post.ID, &post.Slug, &post.Title, &post.AuthorID, &post.CreatedAt, &post.UpdatedAt,
+			&post.ID, &post.Slug, &post.Title, &post.AuthorID, &post.AuthorUsername, &post.CreatedAt, &post.UpdatedAt,
 			&category.ID, &category.Slug, &category.Name, &category.ParentSlug,
 			&category.CreatedAt, &category.UpdatedAt,
 		); err != nil {

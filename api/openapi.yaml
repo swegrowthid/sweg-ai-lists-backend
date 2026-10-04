@@ -752,7 +752,7 @@ components:
           description: "Hanya untuk kind file. Default text/markdown."
     Post:
       type: object
-      required: [id, slug, title, author_id, categories, created_at, updated_at]
+      required: [id, slug, title, author_id, author_username, categories, created_at, updated_at]
       properties:
         id:
           type: string
@@ -767,6 +767,10 @@ components:
           type: string
           format: uuid
           description: User pembuat post.
+        author_username:
+          type: string
+          description: Nama user pembuat post, diambil dari tabel users saat dibaca.
+          example: budi
         categories:
           type: array
           description: Minimal satu.

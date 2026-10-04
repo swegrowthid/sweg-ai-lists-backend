@@ -137,10 +137,11 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 		return Post{}, err
 	}
 	create := CreatePostInput{
-		Title:         title,
-		AuthorID:      input.AuthorID,
-		CategorySlugs: categorySlugs,
-		Items:         items,
+		Title:          title,
+		AuthorID:       input.AuthorID,
+		AuthorUsername: strings.TrimSpace(input.AuthorUsername),
+		CategorySlugs:  categorySlugs,
+		Items:          items,
 	}
 
 	if strings.TrimSpace(input.Slug) != "" {

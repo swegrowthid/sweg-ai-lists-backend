@@ -155,6 +155,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		Slug:           request.Slug,
 		Title:          request.Title,
 		AuthorID:       principal.UserID,
+		AuthorUsername: principal.Username,
 		CategorySlug:   request.Category,
 		DerivativeSlug: request.Derivative,
 		Items:          items,

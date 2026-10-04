@@ -718,6 +718,9 @@ func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 	if created.AuthorID != userID {
 		t.Fatalf("author_id = %q, want the registered user id %q", created.AuthorID, userID)
 	}
+	if created.AuthorUsername != "budi" {
+		t.Fatalf("author_username = %q, want budi", created.AuthorUsername)
+	}
 	if created.Slug != "setup-claude-code" || created.Title != "Setup Claude Code" {
 		t.Fatalf("slug/title = %q/%q, want setup-claude-code/Setup Claude Code", created.Slug, created.Title)
 	}
@@ -742,6 +745,9 @@ func TestCreateHandlerCreatesCategoryAndPost(t *testing.T) {
 	}
 	if stored.ID != created.ID || stored.AuthorID != userID {
 		t.Fatalf("stored post = %+v, want the created post of %q", stored, userID)
+	}
+	if stored.AuthorUsername != "budi" {
+		t.Fatalf("stored author_username = %q, want budi", stored.AuthorUsername)
 	}
 }
 

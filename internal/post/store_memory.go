@@ -15,6 +15,9 @@ import (
 // It mirrors the Postgres store: same conflicts, same read shapes, same order.
 // It does not model the users foreign key, so any non-empty author id is
 // accepted here; Postgres rejects an unknown author with ErrUnknownAuthor.
+// The author username is carried from the create input, where the handler
+// puts the verified token's name; Postgres resolves the same name from the
+// users table at read time. Both agree because this API has no rename.
 type MemoryStore struct {
 	mu         sync.RWMutex
 	categories []Category
@@ -164,14 +167,15 @@ func (m *MemoryStore) Create(_ context.Context, input CreatePostInput) (Post, er
 	}
 
 	created := Post{
-		ID:         postID,
-		Slug:       input.Slug,
-		Title:      input.Title,
-		AuthorID:   input.AuthorID,
-		Categories: categories,
-		Items:      items,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:             postID,
+		Slug:           input.Slug,
+		Title:          input.Title,
+		AuthorID:       input.AuthorID,
+		AuthorUsername: input.AuthorUsername,
+		Categories:     categories,
+		Items:          items,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	m.posts = append(m.posts, created)
 	return clonePost(created, true), nil

@@ -50,14 +50,17 @@ type Item struct {
 // every stored post is live. Items stay empty on list responses and are
 // filled by the detail read only.
 type Post struct {
-	ID         string     `json:"id"`
-	Slug       string     `json:"slug"`
-	Title      string     `json:"title"`
-	AuthorID   string     `json:"author_id"`
-	Categories []Category `json:"categories"`
-	Items      []Item     `json:"items,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID       string `json:"id"`
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	AuthorID string `json:"author_id"`
+	// AuthorUsername is the author's display name. It is resolved from the
+	// users table at read time, never copied onto the posts row.
+	AuthorUsername string     `json:"author_username"`
+	Categories     []Category `json:"categories"`
+	Items          []Item     `json:"items,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 var (
@@ -99,9 +102,13 @@ type CreateCategoryInput struct {
 // list the store links.
 // Item positions are already assigned from the request order.
 type CreatePostInput struct {
-	Slug           string
-	Title          string
-	AuthorID       string
+	Slug     string
+	Title    string
+	AuthorID string
+	// AuthorUsername comes from the verified token. Only the memory store
+	// keeps it: the Postgres store resolves the name from users at read time,
+	// so a stored name can never drift from the account.
+	AuthorUsername string
 	CategorySlug   string
 	DerivativeSlug string
 	CategorySlugs  []string
