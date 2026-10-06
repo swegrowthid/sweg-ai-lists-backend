@@ -18,7 +18,7 @@ store_memory.go   adapter in-memory (test, dev)
 http.go           batas HTTP + mapping error ke status
 ```
 
-Paket domain: `user`, `auth`, `post`, `news`, `tools`. Paket `health` hanya service + http.
+Paket domain: `user`, `auth`, `post`, `news`, `tools`, `wanted`. Paket `health` hanya service + http.
 Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`.
 Wiring graf ada di `internal/app/app.go`. `main` hanya bangun resource lalu jalan.
 
@@ -29,6 +29,7 @@ mux -> auth.Handler -> auth.Service -> user.Service + tokens + RefreshStore
 mux -> post.Handler -> post.Service -> post.Store
 mux -> news.Handler -> news.Service -> news.Store
 mux -> tools.Handler -> tools.Service -> tools.Store
+mux -> wanted.Handler -> wanted.Service -> wanted.Store + post.Service
 ```
 
 Nil pool jatuh ke memory store. Itu dipakai test dan `cmd/memserver`.
@@ -47,6 +48,7 @@ internal/auth      login, refresh, logout, middleware JWT
 internal/post      categories + posts
 internal/news      AI Tools Digest dari blog zainfathoni.com
 internal/tools     katalog tools AI dari markdown tools-ai-swe-growth
+internal/wanted    daftar wanted publik untuk post, tanpa login
 internal/health    liveness + readiness
 internal/platform  config, db, httpserver, logger, docs, id, validator
 api/openapi.yaml   kontrak API
@@ -117,6 +119,9 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `GET` | `/posts` | tidak | Daftar post, tanpa items. Filter `?category=` dan `?q=`. |
 | `POST` | `/posts` | ya | Buat post. Langsung published. |
 | `GET` | `/posts/{slug}` | tidak | Detail post dengan items urut position. |
+| `GET` | `/wanted` | tidak | Daftar post wanted, tanpa items, terbaru ditandai dulu. |
+| `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
+| `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
 | `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
 | `GET` | `/tools` | tidak | Daftar tools AI urut katalog. Filter `?category=` dan `?q=`. |
 | `GET` | `/tools/categories` | tidak | Mapping kategori tools: slug, prefix, file sumber, count. |
@@ -204,6 +209,20 @@ snapshot terakhir tetap tersaji dan run berikutnya mencoba lagi.
   seluruh sync sehingga kategori tidak pernah kosong separuh.
 - Sumber atau kolom berubah = ubah `internal/tools/parser.go`, bukan skema.
 
+## Wanted
+
+`GET /wanted` menyajikan daftar wanted publik untuk post: satu baris per
+post yang ditandai wanted, tanpa login. Tabel `wanted_posts` menyimpan satu
+baris per `post_id`, jadi tandai ulang tidak pernah menggandakan baris.
+
+- `POST /wanted` terima `{"slug":"..."}`. Baris baru jawab 201 dengan post
+  bentuk list (tanpa items, untuk kartu). Slug yang sudah wanted jawab 200
+  dengan post yang sama: idempotent, bukan 409.
+- `GET /wanted` jawab array post bentuk list, paling baru ditandai dulu.
+- `DELETE /wanted/{slug}` cabut tanda. Jawab 204. Post tak dikenal jawab
+  404 `post not found`; post yang tidak wanted jawab 404 `wanted entry not found`.
+- Hapus post hapus baris wanted-nya lewat `ON DELETE CASCADE`.
+
 ## Auth
 
 Login pakai username ATAU email. Email case-insensitive. Salah identifier dan salah password jawab 401 generik yang sama.
@@ -223,6 +242,7 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00005_add_category_parent.sql` | Kolom `parent_id` + trigger batas depth 2. |
 | `00006_seed_default_categories.sql` | Seed `coding`, `creative`, `presentation`. Idempoten. |
 | `00007_create_news.sql` | Tabel `news`. Kunci unik `url`. |
+| `00008_create_wanted_posts.sql` | Tabel `wanted_posts`. Kunci utama `post_id`, hapus post ikut hapus baris. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 

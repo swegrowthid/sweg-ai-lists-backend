@@ -313,6 +313,88 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /wanted:
+    get:
+      summary: Daftar wanted - post yang ditandai wanted, tanpa login
+      operationId: listWanted
+      tags: [wanted]
+      responses:
+        "200":
+          description: Daftar post wanted, tanpa items, paling baru ditandai dulu
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "500":
+          description: Galat server
+    post:
+      summary: Tandai post sebagai wanted - tanpa login, idempotent
+      operationId: addWanted
+      tags: [wanted]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddWantedRequest"
+      responses:
+        "201":
+          description: Post baru ditandai wanted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "200":
+          description: Post sudah wanted - jawab post yang tersimpan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Post tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /wanted/{slug}:
+    delete:
+      summary: Hapus post dari wanted - tanpa login
+      operationId: removeWanted
+      tags: [wanted]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Slug post.
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Post dihapus dari wanted
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Post atau entri wanted tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /news:
     get:
       summary: Daftar news - post AI Tools Digest dari zainfathoni.com
@@ -967,6 +1049,15 @@ components:
             $ref: "#/components/schemas/Tool"
         meta:
           $ref: "#/components/schemas/PageMeta"
+    AddWantedRequest:
+      type: object
+      required: [slug]
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+          description: Slug post yang ditandai wanted.
+          example: setup-claude-code
 tags:
   - name: users
     description: Data user komunitas.
@@ -976,6 +1067,8 @@ tags:
     description: Kategori post, mis. coding agent.
   - name: posts
     description: Post setting AI coding agent.
+  - name: wanted
+    description: Daftar wanted publik untuk post, tanpa login.
   - name: news
     description: News AI Tools Digest dari blog zainfathoni.com, diisi sync harian.
   - name: tools

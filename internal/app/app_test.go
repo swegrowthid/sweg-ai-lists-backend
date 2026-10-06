@@ -272,6 +272,25 @@ func TestAppToolsRoutesAreServed(t *testing.T) {
 	}
 }
 
+// TestAppWantedRoutesAreServed proves the wanted routes ride the production
+// graph. With memory stores the list starts empty, so the endpoint answers [].
+func TestAppWantedRoutesAreServed(t *testing.T) {
+	handler := newTestApp(t).Handler()
+
+	res := doJSON(t, handler, http.MethodGet, "/wanted", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("wanted status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
+		t.Fatalf("wanted body = %q, want an empty list", body)
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/wanted", `{"slug":"missing-post"}`, "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("wanted add missing status = %d, want %d; body = %s", res.Code, http.StatusNotFound, res.Body.String())
+	}
+}
+
 // TestAppCORSAllowlist proves preflights answer only for configured origins.
 // The static frontend lives on another host, so the browser sends OPTIONS
 // first; unlisted origins fall through to the mux untouched.

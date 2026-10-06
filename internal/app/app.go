@@ -16,6 +16,7 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/post"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/tools"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/wanted"
 )
 
 // App wires the graph. main passes R in, App builds the graph.
@@ -76,7 +77,14 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	)
 	userHandler.RegisterRoutes(mux, requireAuth)
 	auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log).RegisterRoutes(mux)
-	post.NewHandler(post.NewService(postStore), log).RegisterRoutes(mux, requireAuth)
+	postSvc := post.NewService(postStore)
+	post.NewHandler(postSvc, log).RegisterRoutes(mux, requireAuth)
+
+	var wantedStore wanted.Store = wanted.NewMemoryStore()
+	if pool != nil {
+		wantedStore = wanted.NewPostgresStore(pool.DB)
+	}
+	wanted.NewHandler(wanted.NewService(wantedStore, postSvc), log).RegisterRoutes(mux)
 
 	newsSvc := news.NewService(newsStore)
 	news.NewHandler(newsSvc, log).RegisterRoutes(mux)
