@@ -38,6 +38,7 @@ func main() {
 	// at midnight server time. Failures are logged, never fatal.
 	go a.RunNewsSync(ctx)
 	go a.RunToolsSync(ctx)
+	go a.RunDailyTermSync(ctx)
 	if err := a.Run(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "error", err)
 		os.Exit(1)

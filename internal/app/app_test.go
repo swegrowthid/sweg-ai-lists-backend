@@ -272,6 +272,32 @@ func TestAppToolsRoutesAreServed(t *testing.T) {
 	}
 }
 
+// TestAppDailyTermRoutesAreServed proves the daily term routes ride the
+// production graph and stay public. With an empty snapshot the list answers 404
+// (no month exists yet) while the month index answers an empty array, so a
+// client can still tell "not synced" from "no such month".
+func TestAppDailyTermRoutesAreServed(t *testing.T) {
+	handler := newTestApp(t).Handler()
+
+	res := doJSON(t, handler, http.MethodGet, "/daily-terms/months", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("months status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
+		t.Fatalf("months body = %q, want an empty month index", body)
+	}
+
+	res = doJSON(t, handler, http.MethodGet, "/daily-terms", "", "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("list status = %d, want %d before the first sync; body = %s", res.Code, http.StatusNotFound, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodGet, "/daily-terms?month=nope", "", "")
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("bad month status = %d, want %d; body = %s", res.Code, http.StatusBadRequest, res.Body.String())
+	}
+}
+
 // TestAppWantedRoutesAreServed proves the wanted routes ride the production
 // graph. With memory stores the list starts empty, so the endpoint answers [].
 func TestAppWantedRoutesAreServed(t *testing.T) {

@@ -547,6 +547,98 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /daily-terms:
+    get:
+      summary: Daftar daily term satu bulan dari repo daily-term-SE-Growth
+      operationId: listDailyTerms
+      tags: [daily-terms]
+      parameters:
+        - name: month
+          in: query
+          required: false
+          description: >-
+            Bulan sumber, format `YYYY-MM`. Kosong berarti bulan server sekarang
+            bila file-nya ada; bila belum ada, bulan terbaru yang tersedia. Bulan
+            yang formatnya salah jawab 400, bulan yang filenya tidak ada jawab 404.
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+          example: "2026-01"
+      responses:
+        "200":
+          description: >-
+            Satu bulan term plus meta bulan yang menjawab. `data` urut berkas sumber,
+            jadi urutannya sama dengan urutan baca penulisnya.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyTermList"
+        "400":
+          description: >-
+            Parameter `month` tidak valid. Contoh: `2026-13`, `2026-1`, `nope`,
+            atau nilai dengan byte NUL.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: >-
+            Bulan tidak punya file di sumber. Termasuk snapshot yang belum pernah
+            sync: belum ada bulan sama sekali.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /daily-terms/months:
+    get:
+      summary: Daftar bulan daily term yang tersedia beserta jumlah term
+      operationId: listDailyTermMonths
+      tags: [daily-terms]
+      responses:
+        "200":
+          description: >-
+            Bulan terbaru dulu. Dipakai frontend membangun pemilih bulan tanpa
+            menyalin tata letak repo sumber. Sebelum sync pertama jawab array kosong.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DailyTermMonth"
+        "500":
+          description: Galat server
+  /daily-terms/{id}:
+    get:
+      summary: Detail satu daily term berdasarkan id
+      operationId: getDailyTerm
+      tags: [daily-terms]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >-
+            Id term, case-insensitive. Bentuknya `YYYY-MM` plus slug judul, mis.
+            `2026-01-sieve-algorithm-or-sieve-of-eratosthenes`.
+          schema:
+            type: string
+          example: 2026-01-sieve-algorithm-or-sieve-of-eratosthenes
+      responses:
+        "200":
+          description: Satu term dari snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyTerm"
+        "404":
+          description: Term tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /auth/login:
     post:
       summary: Login - identifier terima username atau email
@@ -1058,6 +1150,131 @@ components:
           type: string
           description: Slug post yang ditandai wanted.
           example: setup-claude-code
+    DailyTerm:
+      type: object
+      required: [id, year, month, month_key, day, slug, title, definition, example, source_file, source_url]
+      properties:
+        id:
+          type: string
+          description: >-
+            Id stabil term: `YYYY-MM` plus slug judul. Day sengaja tidak ikut:
+            penanda day bisa berulang dalam satu bulan, jadi ia tidak bisa jadi
+            pembeda, dan menambahkannya kelak akan mengubah id yang sudah dipegang
+            klien.
+          example: 2026-01-sieve-algorithm-or-sieve-of-eratosthenes
+        year:
+          type: integer
+          example: 2026
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 1
+        month_key:
+          type: string
+          description: Bulan term, `YYYY-MM`.
+          example: "2026-01"
+        day:
+          type: integer
+          description: >-
+            Nomor "day - N" dari sumber, bukan tanggal kalender: jurnal menomori
+            hari kerja tiap bulan, jadi angka bisa melompati akhir pekan, bisa
+            berulang dalam satu bulan, dan bisa mulai dari 28. Berisi 0 bila
+            penanda tidak ada di atas term.
+          example: 2
+        slug:
+          type: string
+          description: Slug judul. Bagian id setelah `YYYY-MM`.
+          example: sieve-algorithm-or-sieve-of-eratosthenes
+        title:
+          type: string
+          example: Sieve Algorithm or Sieve of Eratosthenes
+        definition:
+          type: string
+          description: >-
+            Markdown mentah. Server tidak merender markdown; frontend yang
+            merender. Label "### Definition:" dari sumber dibuang. Bila term tidak
+            punya label definisi, paragraf pembukanya yang dipakai.
+          example: "The Sieve Algorithm ..."
+        example:
+          type: string
+          description: >-
+            Markdown mentah dari bagian "### Example:" sumber. Boleh string kosong
+            bila term tidak punya contoh.
+        source_file:
+          type: string
+          description: Path berkas markdown di repo sumber.
+          example: 2026/jan-term.md
+        source_url:
+          type: string
+          format: uri
+          description: Halaman GitHub berkas sumber, untuk dibaca manusia.
+    DailyTermMonth:
+      type: object
+      required: [month_key, name, year, month, source_file, source_url, count]
+      properties:
+        month_key:
+          type: string
+          example: "2026-01"
+        name:
+          type: string
+          description: Nama bulan bahasa Inggris, sama seperti nama berkas sumber.
+          example: January
+        year:
+          type: integer
+          example: 2026
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 1
+        source_file:
+          type: string
+          example: 2026/jan-term.md
+        source_url:
+          type: string
+          format: uri
+        count:
+          type: integer
+          description: Jumlah term pada snapshot sync terakhir. 0 sebelum sync pertama.
+          example: 21
+    DailyTermList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          description: Term pada bulan ini, urut berkas sumber.
+          items:
+            $ref: "#/components/schemas/DailyTerm"
+        meta:
+          type: object
+          required: [month_key, name, year, month, source_file, source_url, count]
+          description: >-
+            Bulan yang benar-benar menjawab. Penting saat permintaan tanpa `month`:
+            isinya mengatakan bulan mana yang akhirnya disajikan.
+          properties:
+            month_key:
+              type: string
+              example: "2026-01"
+            name:
+              type: string
+              example: January
+            year:
+              type: integer
+              example: 2026
+            month:
+              type: integer
+              example: 1
+            source_file:
+              type: string
+              example: 2026/jan-term.md
+            source_url:
+              type: string
+              format: uri
+            count:
+              type: integer
+              example: 21
 tags:
   - name: users
     description: Data user komunitas.
@@ -1073,3 +1290,5 @@ tags:
     description: News AI Tools Digest dari blog zainfathoni.com, diisi sync harian.
   - name: tools
     description: Katalog tools AI dari markdown repo tools-ai-swe-growth, diisi sync harian.
+  - name: daily-terms
+    description: Jurnal daily term dari markdown repo daily-term-SE-Growth, diisi sync harian.

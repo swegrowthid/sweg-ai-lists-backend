@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/auth"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/dailyterm"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/health"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/news"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/config"
@@ -28,6 +29,7 @@ type App struct {
 	handler        http.Handler
 	newsScheduler  *news.Scheduler
 	toolsScheduler *tools.Scheduler
+	termScheduler  *dailyterm.Scheduler
 }
 
 // New builds App. Nil logger is a programmer bug, so fail fast.
@@ -94,11 +96,17 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	toolsSvc := tools.NewService(tools.NewMemoryStore())
 	tools.NewHandler(toolsSvc, log).RegisterRoutes(mux)
 
+	// Daily term journal works the same way: one markdown file per month in the
+	// source repo is the database, and the store holds the parsed snapshot.
+	termSvc := dailyterm.NewService(dailyterm.NewMemoryStore())
+	dailyterm.NewHandler(termSvc, log).RegisterRoutes(mux)
+
 	a := &App{
 		cfg:            cfg,
 		log:            log,
 		newsScheduler:  news.NewScheduler(newsSvc, log),
 		toolsScheduler: tools.NewScheduler(toolsSvc, log),
+		termScheduler:  dailyterm.NewScheduler(termSvc, log),
 	}
 	// Middleware order: log everything, then answer preflights, then route.
 	a.handler = a.withLogging(httpserver.CORS(mux, cfg.CORSOrigins))
@@ -118,6 +126,11 @@ func (a *App) RunNewsSync(ctx context.Context) { a.newsScheduler.Run(ctx) }
 // then every day at midnight server time. It blocks, so main starts it in
 // its own goroutine and tests never touch the network.
 func (a *App) RunToolsSync(ctx context.Context) { a.toolsScheduler.Run(ctx) }
+
+// RunDailyTermSync keeps the daily term snapshot fresh until ctx ends: one sync
+// now, then every day at midnight server time. It blocks, so main starts it in
+// its own goroutine and tests never touch the network.
+func (a *App) RunDailyTermSync(ctx context.Context) { a.termScheduler.Run(ctx) }
 
 // Run serves until ctx ends. It blocks. Start/stop lines live in main.
 func (a *App) Run(ctx context.Context) error {
