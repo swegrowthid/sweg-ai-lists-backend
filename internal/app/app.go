@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/auth"
@@ -14,6 +15,7 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/db"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/docs"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/httpserver"
+	"github.com/swegrowthid/sweg-ai-lists-backend/internal/platform/mailer"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/post"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/tools"
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
@@ -53,11 +55,13 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 
 	var store user.Store = user.NewMemoryStore()
 	var refreshStore auth.RefreshStore = auth.NewMemoryRefreshStore()
+	var magicStore auth.MagicStore = auth.NewMemoryMagicStore()
 	var postStore post.Store = post.NewMemoryStore()
 	var newsStore news.Store = news.NewMemoryStore()
 	if pool != nil {
 		store = user.NewPostgresStore(pool.DB)
 		refreshStore = auth.NewPostgresRefreshStore(pool.DB)
+		magicStore = auth.NewPostgresMagicStore(pool.DB)
 		postStore = post.NewPostgresStore(pool.DB)
 		newsStore = news.NewPostgresStore(pool.DB)
 	}
@@ -78,7 +82,31 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 		},
 	)
 	userHandler.RegisterRoutes(mux, requireAuth)
-	auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log).RegisterRoutes(mux)
+
+	magicTTL := cfg.MagicLinkTTL
+	if magicTTL <= 0 {
+		magicTTL = auth.DefaultMagicLinkTTL
+	}
+	magicBaseURL := strings.TrimSpace(cfg.MagicLinkBaseURL)
+	if magicBaseURL == "" {
+		if cfg.IsProd() {
+			panic("app: empty MAGIC_LINK_BASE_URL in prod")
+		}
+		magicBaseURL = auth.DefaultMagicLinkBaseURL
+	}
+	var mail mailer.Mailer
+	if strings.TrimSpace(cfg.JetEmailAPIKey) == "" {
+		if cfg.IsProd() {
+			panic("app: empty JETEMAIL_API_KEY in prod")
+		}
+		mail = mailer.NewLogMailer(log)
+	} else {
+		mail = mailer.NewJetEmail(cfg.JetEmailAPIKey, cfg.MailFrom)
+	}
+
+	authHandler := auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log)
+	authHandler.SetMagic(auth.NewMagic(userSvc, magicStore, tokens, refreshStore, mail, magicBaseURL, magicTTL))
+	authHandler.RegisterRoutes(mux)
 	postSvc := post.NewService(postStore)
 	post.NewHandler(postSvc, log).RegisterRoutes(mux, requireAuth)
 

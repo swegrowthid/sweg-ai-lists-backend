@@ -20,6 +20,7 @@ type Store interface {
 	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, input CreateInput) (User, error)
 	FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error)
+	FindByEmail(ctx context.Context, email string) (User, error)
 	FindByID(ctx context.Context, id string) (User, error)
 	UpdatePasswordHash(ctx context.Context, id, passwordHash string) error
 }
@@ -44,6 +45,16 @@ func NewService(store Store) *Service {
 // List returns all users. Errors pass through untouched (E channel).
 func (s *Service) List(ctx context.Context) ([]User, error) {
 	return s.store.List(ctx)
+}
+
+// FindByEmail looks up a user by email (case-insensitive).
+// Missing users return ErrNotFound.
+func (s *Service) FindByEmail(ctx context.Context, email string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || !strings.Contains(email, "@") {
+		return User{}, ErrNotFound
+	}
+	return s.store.FindByEmail(ctx, email)
 }
 
 // Register validates, hashes, and persists a new user.

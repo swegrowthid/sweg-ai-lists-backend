@@ -4,8 +4,8 @@ package main
 
 import (
 	"context"
-	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/app"
@@ -23,7 +23,7 @@ func main() {
 		JWTRefreshTTL: 24 * time.Hour,
 		CORSOrigins:   []string{"http://localhost:4321"},
 	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx := context.Background()
 	a := app.New(cfg, log, nil)
 	// Same graph as cmd/api: sync the news, tools, and daily term lists now,
