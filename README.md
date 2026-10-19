@@ -19,13 +19,14 @@ http.go           batas HTTP + mapping error ke status
 ```
 
 Paket domain: `user`, `auth`, `post`, `news`, `tools`, `dailyterm`, `wanted`. Paket `health` hanya service + http.
-Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`.
+Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`, `mailer`.
 Wiring graf ada di `internal/app/app.go`. `main` hanya bangun resource lalu jalan.
 
 ```text
 mux -> health.Handler -> health.Service -> db.Pinger
 mux -> user.Handler -> user.Service -> user.Store
 mux -> auth.Handler -> auth.Service -> user.Service + tokens + RefreshStore
+mux -> auth.Handler -> auth.Magic -> user.Service + MagicStore + mailer.Mailer + tokens + RefreshStore
 mux -> post.Handler -> post.Service -> post.Store
 mux -> news.Handler -> news.Service -> news.Store
 mux -> tools.Handler -> tools.Service -> tools.Store
@@ -101,6 +102,10 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | `APP_LOG_LEVEL` | kosong | Level log. |
 | `DOCS_UI` | on di luar prod | `1` paksa on, `0` paksa off. |
 | `CORS_ORIGINS` | kosong | Daftar origin browser, koma-pisah. Kosong = tanpa header CORS. |
+| `JETEMAIL_API_KEY` | kosong | Key transactional JetEmail (`transactional_...`). Kosong di dev = `LogMailer`; kosong di prod = boot panic. |
+| `MAIL_FROM` | kosong | Pengirim email, mis. `SWEG-AI <noreply@ai-sweg.my.id>`. Wajib saat `JETEMAIL_API_KEY` terisi atau di prod. |
+| `MAGIC_LINK_TTL` | `15m` | Umur tautan login magic link satu kali pakai. |
+| `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Wajib di prod. |
 
 Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggil API dari browser.
 
@@ -114,6 +119,8 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `GET` | `/users` | ya | Daftar user. |
 | `PUT` | `/users/password` | ya | Ganti password sendiri. Butuh `current_password` + `new_password`. Sukses cabut semua refresh token. |
 | `POST` | `/auth/login` | tidak | Identifier terima username atau email. |
+| `POST` | `/auth/magic-link` | tidak | Minta tautan login magic link via email. Selalu 200 anti enumerasi; maks 5/jam per email. |
+| `POST` | `/auth/magic-link/verify` | tidak | Tukar token magic link satu kali pakai menjadi TokenPair. |
 | `POST` | `/auth/refresh` | tidak | Rotasi refresh token. Token lama mati. |
 | `POST` | `/auth/logout` | tidak | Cabut refresh token. Jawab 204. |
 | `GET` | `/categories` | tidak | Daftar category, induk dulu. |
@@ -266,6 +273,13 @@ baris per `post_id`, jadi tandai ulang tidak pernah menggandakan baris.
 
 Login pakai username ATAU email. Email case-insensitive. Salah identifier dan salah password jawab 401 generik yang sama.
 
+Magic link (`POST /auth/magic-link` lalu `POST /auth/magic-link/verify`) menyediakan opsi login kedua tanpa password untuk email yang sudah terdaftar:
+
+- Token 32 byte `crypto/rand` base64url (43 karakter); tabel `magic_links` hanya menyimpan `hex(SHA-256(token))`.
+- Tautan email menunjuk `MAGIC_LINK_BASE_URL?token=...` (halaman konfirmasi frontend), bukan endpoint GET backend, sehingga prefetch scanner email tidak membakar token.
+- `POST /auth/magic-link/verify` mengonsumsi token secara atomik (`UPDATE ... WHERE used_at IS NULL AND expires_at > now()`) dan mengeluarkan `TokenPair` yang sama dengan `/auth/login`.
+- Rate limit 5 permintaan per email per jam (`429 too many requests`).
+
 Refresh token bawa `jti`. Rotasi bersifat atomik. Token lama yang dipakai ulang membunuh seluruh keluarga token user itu. Logout cabut token itu.
 
 ## Migrasi
@@ -282,6 +296,7 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00006_seed_default_categories.sql` | Seed `coding`, `creative`, `presentation`. Idempoten. |
 | `00007_create_news.sql` | Tabel `news`. Kunci unik `url`. |
 | `00008_create_wanted_posts.sql` | Tabel `wanted_posts`. Kunci utama `post_id`, hapus post ikut hapus baris. |
+| `00009_create_magic_links.sql` | Tabel `magic_links`. Kunci utama `token_hash` (SHA-256 hex) + index `(email, created_at)`. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 

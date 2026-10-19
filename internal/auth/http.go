@@ -10,10 +10,13 @@ import (
 	"github.com/swegrowthid/sweg-ai-lists-backend/internal/user"
 )
 
+const magicLinkSentMessage = "if the email is registered, a login link is on its way"
+
 // Handler maps Service results to HTTP. It owns status codes.
 type Handler struct {
-	svc *Service
-	log *slog.Logger
+	svc   *Service
+	magic *Magic
+	log   *slog.Logger
 }
 
 // NewHandler wires the service. Nil log falls back to slog.Default.
@@ -27,12 +30,19 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
+// SetMagic wires the passwordless magic link service onto Handler.
+func (h *Handler) SetMagic(magic *Magic) {
+	h.magic = magic
+}
+
 // RegisterRoutes mounts auth endpoints on a stdlib mux. All public:
 // the refresh token in the body is the credential for refresh and logout.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/login", h.login)
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
 	mux.HandleFunc("POST /auth/logout", h.logout)
+	mux.HandleFunc("POST /auth/magic-link", h.requestMagicLink)
+	mux.HandleFunc("POST /auth/magic-link/verify", h.verifyMagicLink)
 }
 
 type loginRequest struct {
@@ -42,6 +52,18 @@ type loginRequest struct {
 
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+type magicLinkRequest struct {
+	Email string `json:"email"`
+}
+
+type magicLinkResponse struct {
+	Message string `json:"message"`
+}
+
+type magicLinkVerifyRequest struct {
+	Token string `json:"token"`
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +127,57 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) requestMagicLink(w http.ResponseWriter, r *http.Request) {
+	if h.magic == nil {
+		h.log.Error("magic link request without magic service", "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var request magicLinkRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.magic.Request(r.Context(), request.Email); err != nil {
+		switch {
+		case errors.Is(err, ErrMagicEmailInvalid):
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+		case errors.Is(err, ErrMagicRateLimited):
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+		default:
+			h.log.Error("magic link request failed", "error", err, "path", r.URL.Path)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, magicLinkResponse{Message: magicLinkSentMessage})
+}
+
+func (h *Handler) verifyMagicLink(w http.ResponseWriter, r *http.Request) {
+	if h.magic == nil {
+		h.log.Error("magic link verify without magic service", "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var request magicLinkVerifyRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	pair, err := h.magic.Verify(r.Context(), request.Token)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrMagicLinkInvalid):
+			http.Error(w, "invalid or expired link", http.StatusUnauthorized)
+		default:
+			h.log.Error("magic link verify failed", "error", err, "path", r.URL.Path)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, pair)
 }
 
 // decodeJSON reads one JSON object, bounded and strict. Shared edge rule.

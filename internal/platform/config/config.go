@@ -24,6 +24,11 @@ type Config struct {
 	JWTSecret     string
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
+
+	JetEmailAPIKey   string
+	MailFrom         string
+	MagicLinkTTL     time.Duration
+	MagicLinkBaseURL string
 }
 
 // Load builds Config from environment with safe defaults.
@@ -49,17 +54,21 @@ func Load() Config {
 	level := strings.ToLower(strings.TrimSpace(os.Getenv("APP_LOG_LEVEL")))
 	dbURL := strings.TrimSpace(os.Getenv("DB_URL"))
 	return Config{
-		Addr:          addr,
-		Env:           env,
-		Version:       version,
-		Service:       service,
-		LogLevel:      level,
-		DBURL:         dbURL,
-		DocsUI:        boolEnv("DOCS_UI", env != "prod"),
-		CORSOrigins:   listEnv("CORS_ORIGINS"),
-		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
-		JWTAccessTTL:  durationEnv("JWT_ACCESS_TTL", 24*time.Hour),
-		JWTRefreshTTL: durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
+		Addr:             addr,
+		Env:              env,
+		Version:          version,
+		Service:          service,
+		LogLevel:         level,
+		DBURL:            dbURL,
+		DocsUI:           boolEnv("DOCS_UI", env != "prod"),
+		CORSOrigins:      listEnv("CORS_ORIGINS"),
+		JWTSecret:        strings.TrimSpace(os.Getenv("JWT_SECRET")),
+		JWTAccessTTL:     durationEnv("JWT_ACCESS_TTL", 24*time.Hour),
+		JWTRefreshTTL:    durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
+		JetEmailAPIKey:   strings.TrimSpace(os.Getenv("JETEMAIL_API_KEY")),
+		MailFrom:         strings.TrimSpace(os.Getenv("MAIL_FROM")),
+		MagicLinkTTL:     durationEnv("MAGIC_LINK_TTL", 15*time.Minute),
+		MagicLinkBaseURL: strings.TrimSpace(os.Getenv("MAGIC_LINK_BASE_URL")),
 	}
 }
 

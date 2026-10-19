@@ -53,3 +53,29 @@ func TestAuthenticateErrorsAreIndistinguishable(t *testing.T) {
 		}
 	}
 }
+
+func TestFindByEmailMatchesCaseInsensitive(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	_, err := svc.Register(context.Background(), RegisterInput{
+		Username: "budi",
+		Email:    "budi@example.com",
+		Password: "password",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	u, err := svc.FindByEmail(context.Background(), "  BUDI@Example.COM ")
+	if err != nil {
+		t.Fatalf("FindByEmail() error = %v", err)
+	}
+	if u.Username != "budi" {
+		t.Fatalf("FindByEmail() username = %q, want budi", u.Username)
+	}
+
+	for _, missing := range []string{"", "not-an-email", "other@example.com"} {
+		if _, err := svc.FindByEmail(context.Background(), missing); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("FindByEmail(%q) error = %v, want ErrNotFound", missing, err)
+		}
+	}
+}

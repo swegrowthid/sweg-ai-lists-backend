@@ -67,6 +67,19 @@ func (m *MemoryStore) FindByUsernameOrEmail(_ context.Context, identifier string
 	return User{}, ErrNotFound
 }
 
+// FindByEmail implements Store. Email matches case-insensitively.
+func (m *MemoryStore) FindByEmail(_ context.Context, email string) (User, error) {
+	email = strings.TrimSpace(email)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, u := range m.users {
+		if strings.EqualFold(u.Email, email) {
+			return u, nil
+		}
+	}
+	return User{}, ErrNotFound
+}
+
 // List implements Store. Returns a copy so callers cannot mutate state.
 func (m *MemoryStore) List(_ context.Context) ([]User, error) {
 	m.mu.RLock()
