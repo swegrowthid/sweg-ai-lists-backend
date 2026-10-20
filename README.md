@@ -103,7 +103,7 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | `DOCS_UI` | on di luar prod | `1` paksa on, `0` paksa off. |
 | `CORS_ORIGINS` | kosong | Daftar origin browser, koma-pisah. Kosong = tanpa header CORS. |
 | `JETEMAIL_API_KEY` | kosong | Key transactional JetEmail (`transactional_...`). Kosong di dev = `LogMailer`; kosong di prod = boot panic. |
-| `MAIL_FROM` | kosong | Pengirim email, mis. `SWEG-AI <noreply@ai-sweg.my.id>`. Wajib saat `JETEMAIL_API_KEY` terisi atau di prod. |
+| `MAIL_FROM` | kosong | Pengirim email, mis. `swegai <noreply@ai-sweg.my.id>`. Wajib saat `JETEMAIL_API_KEY` terisi atau di prod. |
 | `MAGIC_LINK_TTL` | `15m` | Umur tautan login magic link satu kali pakai. |
 | `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Wajib di prod. |
 

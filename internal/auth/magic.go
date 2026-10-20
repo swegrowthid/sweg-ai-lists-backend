@@ -27,7 +27,7 @@ const (
 	magicLinkRateLimit  = 5
 	magicLinkStaleAge   = 24 * time.Hour
 	magicTokenBytes     = 32
-	magicMailSubject    = "Tautan login SWEG-AI"
+	magicMailSubject    = "Your swegai login link"
 )
 
 var (
@@ -165,11 +165,11 @@ func (m *Magic) Request(ctx context.Context, rawEmail string) error {
 		minutes = 1
 	}
 	textBody := fmt.Sprintf(
-		"Gunakan tautan berikut untuk masuk ke SWEG-AI:\n\n%s\n\nTautan ini berlaku %d menit dan satu kali pakai.\nJika Anda tidak meminta tautan ini, abaikan email ini.",
+		"Use this link to sign in to swegai:\n\n%s\n\nThis link works once and expires in %d minutes.\nIf you did not request it, ignore this email.",
 		link, minutes,
 	)
 	htmlBody := fmt.Sprintf(
-		"<p>Gunakan tautan berikut untuk masuk ke SWEG-AI:</p><p><a href=%q>Masuk ke SWEG-AI</a></p><p>%s</p><p>Tautan ini berlaku %d menit dan satu kali pakai.</p><p>Jika Anda tidak meminta tautan ini, abaikan email ini.</p>",
+		"<p>Use this link to sign in to swegai:</p><p><a href=%q>Sign in to swegai</a></p><p>%s</p><p>This link works once and expires in %d minutes.</p><p>If you did not request it, ignore this email.</p>",
 		link, html.EscapeString(link), minutes,
 	)
 

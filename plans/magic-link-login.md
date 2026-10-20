@@ -1,5 +1,11 @@
 # Plan: Login Magic Link (Email)
 
+> Status (2026-10-20, round 2): fitur sudah merged ke `origin/main` (`792f4d2`).
+> Copy email diselaraskan dengan frontend: English, brand `swegai` (`SITE.name`
+> di `src/data/site.ts`), sender `swegai <noreply@ai-sweg.my.id>`. Copy final
+> ada di `internal/auth/magic.go`; bagian desain di bawah adalah rekam
+> perancangan.
+
 ## Context
 
 - Login manual sudah ada: `POST /auth/login` (identifier + password), JWT HS256,
@@ -211,7 +217,7 @@ Env baru:
 
 - `JETEMAIL_API_KEY` - key transactional (`transactional_...`). Kosong = dev
   LogMailer; kosong di prod = panic boot.
-- `MAIL_FROM` - misal `SWEG-AI <noreply@ai-sweg.my.id>`. Wajib saat kirim
+- `MAIL_FROM` - misal `swegai <noreply@ai-sweg.my.id>`. Wajib saat kirim
   aktif.
 - `MAGIC_LINK_TTL` - default `15m`.
 - `MAGIC_LINK_BASE_URL` - URL halaman frontend, misal
@@ -262,7 +268,7 @@ Env baru:
 - Kode 6 digit sebagai cadangan lintas device - v1 atau v2? Rekomendasi: v2.
 - Halaman frontend `/login/magic` dan domain `https://ai-sweg.my.id` - path
   ini benar?
-- Pengirim `SWEG-AI <noreply@ai-sweg.my.id>` - benar?
+- Pengirim `swegai <noreply@ai-sweg.my.id>` - benar?
 - TTL 15 menit dan rate limit 5/jam per email - angka final?
 - Perlu simpan IP peminta di tabel untuk audit, atau skip v1? Rekomendasi:
   skip; RemoteAddr di belakang reverse proxy menyesatkan.
