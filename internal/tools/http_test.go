@@ -239,6 +239,7 @@ func TestToolsEndpointRejectsBadListParams(t *testing.T) {
 		"/tools?sort=name&order=sideways",
 		"/tools?page=0",
 		"/tools?page=abc",
+		"/tools?per_page=0",
 		"/tools?per_page=101",
 		"/tools?per_page=-1",
 	} {

@@ -439,7 +439,9 @@ paths:
         - name: q
           in: query
           required: false
-          description: Cari pada nama tool, case-insensitive.
+          description: >-
+            Cari substring case-insensitive pada nama, label situs, status,
+            minimum spend, dan fitur AI (`ai_features`).
           schema:
             type: string
           example: cursor

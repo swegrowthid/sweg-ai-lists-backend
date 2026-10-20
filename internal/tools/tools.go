@@ -60,7 +60,8 @@ const (
 )
 
 // ListFilter narrows and shapes the catalog list. Category holds a group name
-// or a category slug; Query is a case-insensitive substring on the tool name.
+// or a category slug; Query is a case-insensitive substring over name, website
+// label, status, minimum spend, and the ADE feature list.
 // Sort and Order are empty for source catalog order, otherwise SortName or
 // SortUpdated paired with OrderAsc or OrderDesc. Page is 1-based and PerPage is
 // capped at MaxPerPage; both default when left at zero.

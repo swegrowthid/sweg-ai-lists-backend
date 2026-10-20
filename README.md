@@ -132,7 +132,7 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
 | `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
 | `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
-| `GET` | `/tools` | tidak | Daftar tools AI urut katalog. Filter `?category=` dan `?q=`. |
+| `GET` | `/tools` | tidak | Daftar tools AI urut katalog. Filter `?category=` dan `?q=` (nama, situs, status, min spend, fitur AI). |
 | `GET` | `/tools/categories` | tidak | Mapping kategori tools: slug, prefix, file sumber, count. |
 | `GET` | `/tools/{id}` | tidak | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. |
 | `GET` | `/daily-terms` | tidak | Satu bulan daily term. Filter `?month=YYYY-MM`. |
@@ -213,7 +213,8 @@ snapshot terakhir tetap tersaji dan run berikutnya mencoba lagi.
   `providers.md`), `coding-agents` (`CA`, `codingagents.md`), `ade` (`ADE`,
   `ade.md`), plus `count` baris hasil sync terakhir.
 - `?category=` terima slug atau prefix, case-insensitive: `providers` = `p`.
-- `?q=` cocokkan substring nama tool, case-insensitive.
+- `?q=` cocokkan substring case-insensitive pada nama, label situs, status,
+  minimum spend, dan fitur AI (`ai_features`).
 - Field per kategori: providers membawa `top_up`, `subscribe`, `min_spend`;
   ade membawa `ai_features`. Field milik kategori lain tidak muncul di JSON.
 - `status` dinormalisasi lowercase tanpa emoji; `updated` jadi `YYYY-MM-DD`.

@@ -48,13 +48,25 @@ func (m *MemoryStore) List(_ context.Context, filter ListFilter) ([]Tool, error)
 		if filter.Category != "" && tool.Category != filter.Category {
 			continue
 		}
-		if filter.Query != "" && !strings.Contains(strings.ToLower(tool.Name), filter.Query) {
+		if filter.Query != "" && !toolMatchesQuery(tool, filter.Query) {
 			continue
 		}
 		out = append(out, tool)
 	}
 	sortTools(out, filter.Sort, filter.Order)
 	return out, nil
+}
+
+// toolMatchesQuery reports whether one tool carries needle. The haystack is
+// the same one the browser filter used before paging moved to the server:
+// name, website label, status, minimum spend, and the ADE feature list, joined
+// by spaces. A query can therefore span two fields, as it could in the browser.
+func toolMatchesQuery(tool Tool, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	fields := make([]string, 0, 4+len(tool.AIFeatures))
+	fields = append(fields, tool.Name, tool.WebsiteLabel, tool.Status, tool.MinSpend)
+	fields = append(fields, tool.AIFeatures...)
+	return strings.Contains(strings.ToLower(strings.Join(fields, " ")), needle)
 }
 
 // sortTools orders rows by the requested key, or leaves catalog order alone
