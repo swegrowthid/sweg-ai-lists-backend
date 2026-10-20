@@ -179,6 +179,74 @@ func TestListFiltersCategoryAndQuery(t *testing.T) {
 	}
 }
 
+// TestListQueryUsesTheFullSearchHaystack pins the field set the server-side
+// search covers. The browser filter this endpoint replaced matched name,
+// website label, status, minimum spend, and the ADE feature list, so a
+// name-only regression would silently shrink every search result.
+func TestListQueryUsesTheFullSearchHaystack(t *testing.T) {
+	svc, _ := newTestService(t, fixtureServer(t))
+	ctx := context.Background()
+	if _, err := svc.Sync(ctx); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+		total int
+	}{
+		{"cursor", "ADE-001", 1},
+		{"groq.com", "P-005", 1},
+		{"pay-as-you-go", "P-005", 1},
+		{"autocomplete", "ADE-001", 1},
+		{"active", "P-001,P-005,P-026,P-153,CA-001,CA-018,CA-054,ADE-001,ADE-012,ADE-048", 10},
+		{"  CURSOR  ", "ADE-001", 1},
+	} {
+		got, err := svc.List(ctx, ListFilter{Query: tc.query})
+		if err != nil {
+			t.Fatalf("List(%q) error = %v", tc.query, err)
+		}
+		if joined := idsCSV(got.Data); joined != tc.want {
+			t.Fatalf("List(%q) ids = %s, want %s", tc.query, joined, tc.want)
+		}
+		if got.Meta.Total != tc.total {
+			t.Fatalf("List(%q) total = %d, want %d", tc.query, got.Meta.Total, tc.total)
+		}
+	}
+
+	none, err := svc.List(ctx, ListFilter{Query: "zzz-not-a-tool"})
+	if err != nil {
+		t.Fatalf("List(no match) error = %v", err)
+	}
+	if len(none.Data) != 0 || none.Meta.Total != 0 || none.Meta.TotalPages != 0 {
+		t.Fatalf("List(no match) = %+v, want an empty page with zero totals", none)
+	}
+}
+
+// TestListQueryCombinesWithGroupAndPage pins q next to the other filters: the
+// total counts only the rows the combined filter matches, and the last page
+// carries the remainder.
+func TestListQueryCombinesWithGroupAndPage(t *testing.T) {
+	svc, _ := newTestService(t, fixtureServer(t))
+	ctx := context.Background()
+	if _, err := svc.Sync(ctx); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+
+	// "agent" reaches the ADE feature list on all three ADE rows (and the
+	// OpenAgentic.id name, which the group filter drops).
+	got, err := svc.List(ctx, ListFilter{Category: "ade", Query: "agent", Sort: SortName, Page: 2, PerPage: 2})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if ids := idsCSV(got.Data); ids != "ADE-048" {
+		t.Fatalf("page 2 ids = %s, want the last ADE row by name", ids)
+	}
+	if got.Meta != (PageMeta{Page: 2, PerPage: 2, Total: 3, TotalPages: 2}) {
+		t.Fatalf("meta = %+v, want 2/2/3/2", got.Meta)
+	}
+}
+
 func TestListRejectsBadFilters(t *testing.T) {
 	svc, _ := newTestService(t, fixtureServer(t))
 	ctx := context.Background()
