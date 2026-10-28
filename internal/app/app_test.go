@@ -1,11 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -365,5 +367,113 @@ func TestAppCORSAllowlist(t *testing.T) {
 	}
 	if res.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unlisted preflight status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
+	var logBuf bytes.Buffer
+	cfg := config.Config{
+		Service:          "sweg-ai-test",
+		Env:              "test",
+		Version:          "test",
+		JWTSecret:        "test-secret-for-app-tests",
+		JWTAccessTTL:     24 * time.Hour,
+		JWTRefreshTTL:    24 * time.Hour,
+		MagicLinkTTL:     15 * time.Minute,
+		MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+	}
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+	handler := New(cfg, log, nil).Handler()
+
+	res := doJSON(t, handler, http.MethodPost, "/users/register",
+		`{"username":"magicuser","email":"magic@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+
+	res = doJSON(t, handler, http.MethodPost, "/auth/magic-link", `{"email":"magic@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("magic-link status = %d, want 200; body = %s", res.Code, res.Body.String())
+	}
+
+	logged := logBuf.String()
+	const prefix = "https://ai-sweg.my.id/login/magic?token="
+	idx := strings.Index(logged, prefix)
+	if idx < 0 {
+		t.Fatalf("log output missing magic link prefix %q: %s", prefix, logged)
+	}
+	rest := logged[idx:]
+	end := strings.IndexAny(rest, "\\\n\" ")
+	if end > 0 {
+		rest = rest[:end]
+	}
+	parsedURL, err := url.Parse(rest)
+	if err != nil {
+		t.Fatalf("parse logged URL %q: %v", rest, err)
+	}
+	rawToken := parsedURL.Query().Get("token")
+	if len(rawToken) != 43 {
+		t.Fatalf("token length = %d, want 43; url = %q", len(rawToken), rest)
+	}
+
+	verifyRes := doJSON(t, handler, http.MethodPost, "/auth/magic-link/verify", `{"token":"`+rawToken+`"}`, "")
+	if verifyRes.Code != http.StatusOK {
+		t.Fatalf("verify status = %d, want 200; body = %s", verifyRes.Code, verifyRes.Body.String())
+	}
+	var pair auth.Pair
+	if err := json.Unmarshal(verifyRes.Body.Bytes(), &pair); err != nil {
+		t.Fatalf("decode verify response: %v", err)
+	}
+	if pair.AccessToken == "" {
+		t.Fatal("verify response misses access_token")
+	}
+
+	usersRes := doJSON(t, handler, http.MethodGet, "/users", "", pair.AccessToken)
+	if usersRes.Code != http.StatusOK {
+		t.Fatalf("GET /users status = %d, want 200", usersRes.Code)
+	}
+
+	reuseRes := doJSON(t, handler, http.MethodPost, "/auth/magic-link/verify", `{"token":"`+rawToken+`"}`, "")
+	if reuseRes.Code != http.StatusUnauthorized {
+		t.Fatalf("second verify status = %d, want 401", reuseRes.Code)
+	}
+}
+
+func TestAppProdPanicsWhenJetEmailKeyOrBaseURLMissing(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for name, cfg := range map[string]config.Config{
+		"missing_jetemail_key": {
+			Env:              "prod",
+			JWTSecret:        "prod-secret",
+			JWTAccessTTL:     time.Hour,
+			JWTRefreshTTL:    time.Hour,
+			MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+			MailFrom:         "SWEG-AI <noreply@ai-sweg.my.id>",
+		},
+		"missing_base_url": {
+			Env:            "prod",
+			JWTSecret:      "prod-secret",
+			JWTAccessTTL:   time.Hour,
+			JWTRefreshTTL:  time.Hour,
+			JetEmailAPIKey: "transactional_key",
+			MailFrom:       "SWEG-AI <noreply@ai-sweg.my.id>",
+		},
+		"missing_mail_from": {
+			Env:              "prod",
+			JWTSecret:        "prod-secret",
+			JWTAccessTTL:     time.Hour,
+			JWTRefreshTTL:    time.Hour,
+			JetEmailAPIKey:   "transactional_key",
+			MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected New() to panic for %s", name)
+				}
+			}()
+			_ = New(cfg, log, nil)
+		})
 	}
 }

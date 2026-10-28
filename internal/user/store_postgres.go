@@ -72,6 +72,30 @@ func (s *PostgresStore) FindByUsernameOrEmail(ctx context.Context, identifier st
 	return u, nil
 }
 
+// FindByEmail implements Store. Email matches lowercase-folded.
+func (s *PostgresStore) FindByEmail(ctx context.Context, email string) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE email = lower($1)
+	`, email).Scan(
+		&u.ID,
+		&u.Username,
+		&u.Email,
+		&u.PasswordHash,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("user: find by email: %w", err)
+	}
+	return u, nil
+}
+
 // List implements Store. It never selects password_hash.
 func (s *PostgresStore) List(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, username, email, created_at, updated_at FROM users ORDER BY created_at, id`)

@@ -439,7 +439,9 @@ paths:
         - name: q
           in: query
           required: false
-          description: Cari pada nama tool, case-insensitive.
+          description: >-
+            Cari substring case-insensitive pada nama, label situs, status,
+            minimum spend, dan fitur AI (`ai_features`).
           schema:
             type: string
           example: cursor
@@ -731,6 +733,81 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /auth/magic-link:
+    post:
+      summary: Minta tautan login magic link via email
+      description: >-
+        Kirim tautan login satu kali pakai ke email terdaftar. Endpoint selalu
+        menjawab 200 dengan pesan sama baik email terdaftar maupun tidak (anti
+        enumerasi akun). Tautan menunjuk halaman konfirmasi frontend agar
+        prefetch email scanner tidak membakar token. Maksimal 5 permintaan per
+        email per jam.
+      operationId: requestMagicLink
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MagicLinkRequest"
+      responses:
+        "200":
+          description: Pesan generik bahwa tautan sedang dikirim bila email terdaftar
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MagicLinkResponse"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "429":
+          description: Terlalu banyak permintaan magic link untuk email ini (maks 5/jam)
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /auth/magic-link/verify:
+    post:
+      summary: Tukar token magic link satu kali pakai menjadi token pair
+      description: >-
+        Konsumsi token 32 byte base64url secara atomik lewat POST dari aksi
+        user di halaman konfirmasi frontend. Mengeluarkan TokenPair yang sama
+        dengan /auth/login. Token tidak dikenal, kadaluarsa, atau sudah dipakai
+        menjawab 401 dengan satu pesan generik.
+      operationId: verifyMagicLink
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MagicLinkVerifyRequest"
+      responses:
+        "200":
+          description: Login berhasil, access + refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Tautan tidak valid, kadaluarsa, atau sudah dipakai
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
 components:
   securitySchemes:
     bearerAuth:
@@ -775,6 +852,34 @@ components:
         refresh_token:
           type: string
           example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+    MagicLinkRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email akun terdaftar (case-insensitive)
+          example: budi@test.id
+    MagicLinkResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Pesan generik yang selalu sama (anti enumerasi akun)
+          example: if the email is registered, a login link is on its way
+    MagicLinkVerifyRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          writeOnly: true
+          description: Token 32 byte base64url tanpa padding (43 karakter) dari tautan email
+          example: dGhpcy1pcy1hLTQzLWNoYXItYmFzZTY0dXJsLXRva2VuLXNhbXBsZQ
     TokenPair:
       type: object
       required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]
