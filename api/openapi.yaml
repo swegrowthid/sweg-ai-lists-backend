@@ -735,13 +735,15 @@ paths:
           description: Galat server
   /auth/magic-link:
     post:
-      summary: Minta tautan login magic link via email
+      summary: Minta tautan dan kode login magic link via email
       description: >-
-        Kirim tautan login satu kali pakai ke email terdaftar. Endpoint selalu
-        menjawab 200 dengan pesan sama baik email terdaftar maupun tidak (anti
-        enumerasi akun). Tautan menunjuk halaman konfirmasi frontend agar
-        prefetch email scanner tidak membakar token. Maksimal 5 permintaan per
-        email per jam.
+        Kirim tautan login satu kali pakai plus kode 8 digit ke email
+        terdaftar; keduanya bisa dipakai untuk verify, mana pun yang lebih
+        dulu. Endpoint selalu menjawab 200 dengan pesan sama baik email
+        terdaftar maupun tidak (anti enumerasi akun). Tautan menunjuk halaman
+        konfirmasi frontend agar prefetch email scanner tidak membakar token.
+        Permintaan baru untuk email yang sama meniadakan tautan dan kode lama
+        yang belum dipakai. Maksimal 5 permintaan per email per jam.
       operationId: requestMagicLink
       tags: [auth]
       requestBody:
@@ -752,7 +754,9 @@ paths:
               $ref: "#/components/schemas/MagicLinkRequest"
       responses:
         "200":
-          description: Pesan generik bahwa tautan sedang dikirim bila email terdaftar
+          description: >-
+            Pesan generik bahwa tautan sedang dikirim bila email terdaftar,
+            plus `expires_in` (detik) untuk countdown klien
           content:
             application/json:
               schema:
@@ -773,12 +777,16 @@ paths:
           description: Galat server
   /auth/magic-link/verify:
     post:
-      summary: Tukar token magic link satu kali pakai menjadi token pair
+      summary: Tukar token magic link atau email+kode menjadi token pair
       description: >-
-        Konsumsi token 32 byte base64url secara atomik lewat POST dari aksi
-        user di halaman konfirmasi frontend. Mengeluarkan TokenPair yang sama
-        dengan /auth/login. Token tidak dikenal, kadaluarsa, atau sudah dipakai
-        menjawab 401 dengan satu pesan generik.
+        Terima satu dari dua bentuk: `{"token": "..."}` untuk alur tautan,
+        atau `{"email": "...", "code": "..."}` untuk kode 8 digit dari email
+        yang sama. Keduanya satu kali pakai dan dikonsumsi secara atomik lewat
+        POST dari aksi user. Mengeluarkan TokenPair yang sama dengan
+        /auth/login. Bentuk token menjawab 401 `invalid or expired link`;
+        bentuk kode menjawab `invalid or expired code` - satu pesan generik
+        untuk tidak dikenal, kadaluarsa, sudah dipakai, atau terkunci setelah
+        5 percobaan salah.
       operationId: verifyMagicLink
       tags: [auth]
       requestBody:
@@ -801,7 +809,11 @@ paths:
               schema:
                 type: string
         "401":
-          description: Tautan tidak valid, kadaluarsa, atau sudah dipakai
+          description: >-
+            Bentuk token: `invalid or expired link` untuk tautan tidak valid,
+            kadaluarsa, atau sudah dipakai. Bentuk kode: `invalid or expired
+            code` untuk kode tidak valid, kadaluarsa, sudah dipakai, atau
+            terkunci setelah 5 percobaan salah.
           content:
             text/plain:
               schema:
@@ -864,22 +876,39 @@ components:
           example: budi@test.id
     MagicLinkResponse:
       type: object
-      required: [message]
+      required: [message, expires_in]
       properties:
         message:
           type: string
           description: Pesan generik yang selalu sama (anti enumerasi akun)
           example: if the email is registered, a login link is on its way
+        expires_in:
+          type: integer
+          description: Umur tautan dan kode dalam detik (MAGIC_LINK_TTL). Sama untuk tiap respons; dipakai klien untuk countdown dan menawarkan kirim ulang.
+          example: 900
     MagicLinkVerifyRequest:
       type: object
-      required: [token]
+      description: >-
+        Satu dari dua bentuk: `{"token": "..."}` untuk alur tautan, atau
+        `{"email": "...", "code": "..."}` untuk kode 8 digit dari email yang
+        sama. Keduanya satu kali pakai; mana pun yang dipakai lebih dulu.
       additionalProperties: false
       properties:
         token:
           type: string
           writeOnly: true
-          description: Token 32 byte base64url tanpa padding (43 karakter) dari tautan email
+          description: Token 32 byte base64url tanpa padding (43 karakter) dari tautan email. Bentuk tautan.
           example: dGhpcy1pcy1hLTQzLWNoYXItYmFzZTY0dXJsLXRva2VuLXNhbXBsZQ
+        email:
+          type: string
+          format: email
+          description: Email yang meminta magic link (case-insensitive). Wajib pada bentuk kode.
+          example: budi@test.id
+        code:
+          type: string
+          writeOnly: true
+          description: Kode 8 digit dari email yang sama; spasi dan tanda hubung diabaikan ("1234 5678" diterima). Terkunci setelah 5 percobaan salah. Bentuk kode.
+          example: "12345678"
     TokenPair:
       type: object
       required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in]

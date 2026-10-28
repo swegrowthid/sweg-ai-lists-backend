@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -363,6 +364,17 @@ func extractTokenFromMail(t *testing.T, msg mailer.Message) string {
 	return ""
 }
 
+var magicCodeRe = regexp.MustCompile(`\b(\d{4}) (\d{4})\b`)
+
+func extractCodeFromMail(t *testing.T, msg mailer.Message) string {
+	t.Helper()
+	m := magicCodeRe.FindStringSubmatch(msg.Text)
+	if m == nil {
+		t.Fatalf("no grouped code found in email text: %q", msg.Text)
+	}
+	return m[1] + m[2]
+}
+
 func TestMagicLinkRequestRegisteredAndUnregisteredShareIdenticalResponse(t *testing.T) {
 	rig := newMagicTestRig()
 	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
@@ -379,6 +391,14 @@ func TestMagicLinkRequestRegisteredAndUnregisteredShareIdenticalResponse(t *test
 	}
 	if regRes.Body.String() != unregRes.Body.String() {
 		t.Fatalf("responses differ:\nregistered:   %q\nunregistered: %q", regRes.Body.String(), unregRes.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(regRes.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode magic-link response: %v", err)
+	}
+	expiresIn, ok := body["expires_in"].(float64)
+	if !ok || expiresIn <= 0 {
+		t.Fatalf("expires_in = %v, want a positive number", body["expires_in"])
 	}
 	if rig.mailer.count() != 1 {
 		t.Fatalf("sent emails = %d, want 1 (only registered user)", rig.mailer.count())
@@ -510,6 +530,15 @@ func TestMagicLinkVerifyUnknownExpiredAndUsedShareGeneric401(t *testing.T) {
 			t.Fatalf("bad magic-link body %s status = %d, want 400", badBody, bad.Code)
 		}
 	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"123"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("short code status = %d, want 401; body = %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "invalid or expired code" {
+		t.Fatalf("short code body = %q, want %q", got, "invalid or expired code")
+	}
 }
 
 func TestMagicLinkVerifyConcurrentRaceOnlyOneWins(t *testing.T) {
@@ -575,5 +604,167 @@ func TestMagicLinkNeverLogsRawToken(t *testing.T) {
 	logged := rig.logBuf.String()
 	if strings.Contains(logged, rawToken) {
 		t.Fatalf("handler log leaked raw magic token: %s", logged)
+	}
+}
+
+func TestMagicLinkVerifyWithCodeHappyPathAndSingleUse(t *testing.T) {
+	rig := newMagicTestRig()
+	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
+		`{"username":"budi","email":"budi@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", res.Code, http.StatusCreated)
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("request magic link status = %d, want 200", res.Code)
+	}
+	msg := rig.mailer.last()
+	if !magicCodeRe.MatchString(msg.Text) {
+		t.Fatalf("email text misses the grouped code form: %q", msg.Text)
+	}
+	code := extractCodeFromMail(t, msg)
+	rawToken := extractTokenFromMail(t, msg)
+	var stored MagicLinkRecord
+	for _, rec := range rig.magicStore.records {
+		if rec.CodeHash == code {
+			t.Fatal("raw code was stored in MagicStore instead of its SHA-256 hash")
+		}
+		stored = rec
+	}
+	if stored.CodeHash != hashMagicToken(code) {
+		t.Fatal("stored code_hash is not the SHA-256 of the emailed code")
+	}
+
+	verifyRes := doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+code+`"}`, "")
+	if verifyRes.Code != http.StatusOK {
+		t.Fatalf("verify code status = %d, want 200; body = %s", verifyRes.Code, verifyRes.Body.String())
+	}
+	var pair Pair
+	if err := json.Unmarshal(verifyRes.Body.Bytes(), &pair); err != nil {
+		t.Fatalf("decode verify token pair: %v", err)
+	}
+	if pair.AccessToken == "" || pair.RefreshToken == "" || pair.TokenType != "Bearer" {
+		t.Fatalf("unexpected token pair: %+v", pair)
+	}
+
+	usersRes := doJSON(t, rig.mux, http.MethodGet, "/users", "", pair.AccessToken)
+	if usersRes.Code != http.StatusOK {
+		t.Fatalf("GET /users with magic-code access token = %d, want 200", usersRes.Code)
+	}
+
+	replay := doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+code+`"}`, "")
+	if replay.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed code status = %d, want 401; body = %s", replay.Code, replay.Body.String())
+	}
+	if got := strings.TrimSpace(replay.Body.String()); got != "invalid or expired code" {
+		t.Fatalf("replayed code body = %q, want %q", got, "invalid or expired code")
+	}
+
+	linkReplay := doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"token":"`+rawToken+`"}`, "")
+	if linkReplay.Code != http.StatusUnauthorized {
+		t.Fatalf("link after code use status = %d, want 401; body = %s", linkReplay.Code, linkReplay.Body.String())
+	}
+	if got := strings.TrimSpace(linkReplay.Body.String()); got != "invalid or expired link" {
+		t.Fatalf("link after code use body = %q, want %q", got, "invalid or expired link")
+	}
+}
+
+func TestMagicLinkCodeExpiresAfterTTL(t *testing.T) {
+	rig := newMagicTestRig()
+	now := time.Date(2026, 10, 17, 14, 0, 0, 0, time.UTC)
+	rig.magic.now = func() time.Time { return now }
+
+	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
+		`{"username":"budi","email":"budi@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", res.Code, http.StatusCreated)
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("request magic link status = %d, want 200", res.Code)
+	}
+	code := extractCodeFromMail(t, rig.mailer.last())
+
+	now = now.Add(16 * time.Minute)
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+code+`"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expired code status = %d, want 401; body = %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "invalid or expired code" {
+		t.Fatalf("expired code body = %q, want %q", got, "invalid or expired code")
+	}
+}
+
+func TestMagicLinkCodeLocksAfterFiveBadAttempts(t *testing.T) {
+	rig := newMagicTestRig()
+	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
+		`{"username":"budi","email":"budi@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", res.Code, http.StatusCreated)
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("request magic link status = %d, want 200", res.Code)
+	}
+	code := extractCodeFromMail(t, rig.mailer.last())
+
+	wrong := []byte(code)
+	if wrong[0] == '0' {
+		wrong[0] = '1'
+	} else {
+		wrong[0] = '0'
+	}
+	for i := 1; i <= magicCodeMaxAttempts; i++ {
+		res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+			`{"email":"budi@test.id","code":"`+string(wrong)+`"}`, "")
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong code attempt %d status = %d, want 401; body = %s", i, res.Code, res.Body.String())
+		}
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+code+`"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("code after lockout status = %d, want 401; body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestMagicLinkNewRequestSupersedesPrevious(t *testing.T) {
+	rig := newMagicTestRig()
+	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
+		`{"username":"budi","email":"budi@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", res.Code, http.StatusCreated)
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", res.Code)
+	}
+	codeA := extractCodeFromMail(t, rig.mailer.last())
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("second request status = %d, want 200", res.Code)
+	}
+	codeB := extractCodeFromMail(t, rig.mailer.last())
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+codeA+`"}`, "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("superseded code status = %d, want 401; body = %s", res.Code, res.Body.String())
+	}
+
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link/verify",
+		`{"email":"budi@test.id","code":"`+codeB+`"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("newest code status = %d, want 200; body = %s", res.Code, res.Body.String())
 	}
 }

@@ -8,6 +8,13 @@
 > Revisi (2026-10-28): provider email diganti dari JetEmail REST ke SMTP
 > Sumopod (implicit TLS, port 465). Lihat bagian "Revisi 2026-10-28" di
 > akhir dokumen.
+> Update (2026-10-28): email kini memuat tautan + kode 8 digit (disimpan
+> sebagai hash SHA-256 `code_hash`, tidak pernah plaintext). Verify
+> menerima token ATAU email+kode, mana pun yang dipakai lebih dulu. Respon
+> `POST /auth/magic-link` membawa `expires_in` untuk countdown klien. Kode
+> berumur sama dengan tautan (`MAGIC_LINK_TTL`), terkunci setelah 5
+> percobaan salah, dan permintaan baru meniadakan tautan + kode lama yang
+> belum dipakai (supersede).
 
 ## Context
 

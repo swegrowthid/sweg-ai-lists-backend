@@ -59,11 +59,14 @@ type magicLinkRequest struct {
 }
 
 type magicLinkResponse struct {
-	Message string `json:"message"`
+	Message   string `json:"message"`
+	ExpiresIn int    `json:"expires_in"`
 }
 
 type magicLinkVerifyRequest struct {
 	Token string `json:"token"`
+	Email string `json:"email"`
+	Code  string `json:"code"`
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +155,7 @@ func (h *Handler) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, magicLinkResponse{Message: magicLinkSentMessage})
+	writeJSON(w, http.StatusOK, magicLinkResponse{Message: magicLinkSentMessage, ExpiresIn: h.magic.TTLSeconds()})
 }
 
 func (h *Handler) verifyMagicLink(w http.ResponseWriter, r *http.Request) {
@@ -166,9 +169,17 @@ func (h *Handler) verifyMagicLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	pair, err := h.magic.Verify(r.Context(), request.Token)
+	var pair Pair
+	var err error
+	if request.Code != "" {
+		pair, err = h.magic.VerifyCode(r.Context(), request.Email, request.Code)
+	} else {
+		pair, err = h.magic.Verify(r.Context(), request.Token)
+	}
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrMagicLinkInvalid) && request.Code != "":
+			http.Error(w, "invalid or expired code", http.StatusUnauthorized)
 		case errors.Is(err, ErrMagicLinkInvalid):
 			http.Error(w, "invalid or expired link", http.StatusUnauthorized)
 		default:

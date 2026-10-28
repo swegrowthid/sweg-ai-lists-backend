@@ -107,7 +107,7 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | `SMTP_USERNAME` | kosong | Username SMTP. Wajib saat `SMTP_HOST` terisi. |
 | `SMTP_PASSWORD` | kosong | Password SMTP. Dibaca apa adanya: tanpa trim, tanpa tanda kutip. Wajib saat `SMTP_HOST` terisi. |
 | `MAIL_FROM` | kosong | Pengirim email, mis. `swegai <noreply@ai-sweg.my.id>`. Alamat amplop diambil dari `<...>`, display name tetap di header `From`. Wajib saat kirim aktif. |
-| `MAGIC_LINK_TTL` | `15m` | Umur tautan login magic link satu kali pakai. |
+| `MAGIC_LINK_TTL` | `15m` | Umur tautan dan kode login magic link satu kali pakai. |
 | `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Wajib di prod. |
 
 Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggil API dari browser.
@@ -122,8 +122,8 @@ Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggi
 | `GET` | `/users` | ya | Daftar user. |
 | `PUT` | `/users/password` | ya | Ganti password sendiri. Butuh `current_password` + `new_password`. Sukses cabut semua refresh token. |
 | `POST` | `/auth/login` | tidak | Identifier terima username atau email. |
-| `POST` | `/auth/magic-link` | tidak | Minta tautan login magic link via email. Selalu 200 anti enumerasi; maks 5/jam per email. |
-| `POST` | `/auth/magic-link/verify` | tidak | Tukar token magic link satu kali pakai menjadi TokenPair. |
+| `POST` | `/auth/magic-link` | tidak | Minta tautan + kode login via email. Selalu 200 anti enumerasi dengan `expires_in`; maks 5/jam per email. |
+| `POST` | `/auth/magic-link/verify` | tidak | Tukar token magic link ATAU email+kode satu kali pakai menjadi TokenPair. |
 | `POST` | `/auth/refresh` | tidak | Rotasi refresh token. Token lama mati. |
 | `POST` | `/auth/logout` | tidak | Cabut refresh token. Jawab 204. |
 | `GET` | `/categories` | tidak | Daftar category, induk dulu. |
@@ -279,9 +279,12 @@ Login pakai username ATAU email. Email case-insensitive. Salah identifier dan sa
 
 Magic link (`POST /auth/magic-link` lalu `POST /auth/magic-link/verify`) menyediakan opsi login kedua tanpa password untuk email yang sudah terdaftar:
 
-- Token 32 byte `crypto/rand` base64url (43 karakter); tabel `magic_links` hanya menyimpan `hex(SHA-256(token))`.
+- Token 32 byte `crypto/rand` base64url (43 karakter) plus kode 8 digit; tabel `magic_links` hanya menyimpan `hex(SHA-256(token))` dan `code_hash` (SHA-256), tidak pernah plaintext.
+- Email memuat tautan dan kode (kode tampil "1234 5678"); salah satu bisa dipakai sekali, mana pun yang lebih dulu. Kode berumur sama dengan tautan (`MAGIC_LINK_TTL`) dan terkunci setelah 5 percobaan salah - minta ulang untuk kode baru.
 - Tautan email menunjuk `MAGIC_LINK_BASE_URL?token=...` (halaman konfirmasi frontend), bukan endpoint GET backend, sehingga prefetch scanner email tidak membakar token.
-- `POST /auth/magic-link/verify` mengonsumsi token secara atomik (`UPDATE ... WHERE used_at IS NULL AND expires_at > now()`) dan mengeluarkan `TokenPair` yang sama dengan `/auth/login`.
+- `POST /auth/magic-link` menjawab `expires_in` (detik, TTL tautan dan kode) agar klien bisa countdown dan menawarkan kirim ulang saat habis.
+- `POST /auth/magic-link/verify` terima `{token}` ATAU `{email, code}`, mengonsumsinya secara atomik (`UPDATE ... WHERE used_at IS NULL AND expires_at > now()`), dan mengeluarkan `TokenPair` yang sama dengan `/auth/login`.
+- Permintaan baru untuk email yang sama meniadakan tautan dan kode lama yang belum dipakai; hanya permintaan terbaru yang berlaku.
 - Rate limit 5 permintaan per email per jam (`429 too many requests`).
 
 Refresh token bawa `jti`. Rotasi bersifat atomik. Token lama yang dipakai ulang membunuh seluruh keluarga token user itu. Logout cabut token itu.
