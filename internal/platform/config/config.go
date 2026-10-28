@@ -25,8 +25,12 @@ type Config struct {
 	JWTAccessTTL  time.Duration
 	JWTRefreshTTL time.Duration
 
-	JetEmailAPIKey   string
-	MailFrom         string
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	MailFrom     string
+
 	MagicLinkTTL     time.Duration
 	MagicLinkBaseURL string
 }
@@ -53,6 +57,10 @@ func Load() Config {
 	}
 	level := strings.ToLower(strings.TrimSpace(os.Getenv("APP_LOG_LEVEL")))
 	dbURL := strings.TrimSpace(os.Getenv("DB_URL"))
+	smtpPort := strings.TrimSpace(os.Getenv("SMTP_PORT"))
+	if smtpPort == "" {
+		smtpPort = "465"
+	}
 	return Config{
 		Addr:             addr,
 		Env:              env,
@@ -65,7 +73,10 @@ func Load() Config {
 		JWTSecret:        strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		JWTAccessTTL:     durationEnv("JWT_ACCESS_TTL", 24*time.Hour),
 		JWTRefreshTTL:    durationEnv("JWT_REFRESH_TTL", 7*24*time.Hour),
-		JetEmailAPIKey:   strings.TrimSpace(os.Getenv("JETEMAIL_API_KEY")),
+		SMTPHost:         strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:         smtpPort,
+		SMTPUsername:     strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:     os.Getenv("SMTP_PASSWORD"),
 		MailFrom:         strings.TrimSpace(os.Getenv("MAIL_FROM")),
 		MagicLinkTTL:     durationEnv("MAGIC_LINK_TTL", 15*time.Minute),
 		MagicLinkBaseURL: strings.TrimSpace(os.Getenv("MAGIC_LINK_BASE_URL")),

@@ -102,8 +102,11 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | `APP_LOG_LEVEL` | kosong | Level log. |
 | `DOCS_UI` | on di luar prod | `1` paksa on, `0` paksa off. |
 | `CORS_ORIGINS` | kosong | Daftar origin browser, koma-pisah. Kosong = tanpa header CORS. |
-| `JETEMAIL_API_KEY` | kosong | Key transactional JetEmail (`transactional_...`). Kosong di dev = `LogMailer`; kosong di prod = boot panic. |
-| `MAIL_FROM` | kosong | Pengirim email, mis. `swegai <noreply@ai-sweg.my.id>`. Wajib saat `JETEMAIL_API_KEY` terisi atau di prod. |
+| `SMTP_HOST` | kosong | Host SMTP, mis. `smtp.sumopod.com`. Kosong di dev = `LogMailer`; kosong di prod = boot panic. |
+| `SMTP_PORT` | `465` | Port SMTP. Koneksi selalu implicit TLS (SSL), bukan STARTTLS. |
+| `SMTP_USERNAME` | kosong | Username SMTP. Wajib saat `SMTP_HOST` terisi. |
+| `SMTP_PASSWORD` | kosong | Password SMTP. Dibaca apa adanya: tanpa trim, tanpa tanda kutip. Wajib saat `SMTP_HOST` terisi. |
+| `MAIL_FROM` | kosong | Pengirim email, mis. `swegai <noreply@ai-sweg.my.id>`. Alamat amplop diambil dari `<...>`, display name tetap di header `From`. Wajib saat kirim aktif. |
 | `MAGIC_LINK_TTL` | `15m` | Umur tautan login magic link satu kali pakai. |
 | `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Wajib di prod. |
 
