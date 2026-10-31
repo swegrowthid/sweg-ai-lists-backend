@@ -25,7 +25,7 @@ type Mailer interface {
 }
 
 // LogMailer writes outgoing emails to the structured logger instead of calling
-// an external API. Use in local dev and tests when JETEMAIL_API_KEY is empty.
+// an external API. Use in local dev and tests when SMTP_HOST is empty.
 type LogMailer struct {
 	log *slog.Logger
 }

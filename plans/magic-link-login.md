@@ -5,6 +5,16 @@
 > di `src/data/site.ts`), sender `swegai <noreply@ai-sweg.my.id>`. Copy final
 > ada di `internal/auth/magic.go`; bagian desain di bawah adalah rekam
 > perancangan.
+> Revisi (2026-10-28): provider email diganti dari JetEmail REST ke SMTP
+> Sumopod (implicit TLS, port 465). Lihat bagian "Revisi 2026-10-28" di
+> akhir dokumen.
+> Update (2026-10-28): email kini memuat tautan + kode 8 digit (disimpan
+> sebagai hash SHA-256 `code_hash`, tidak pernah plaintext). Verify
+> menerima token ATAU email+kode, mana pun yang dipakai lebih dulu. Respon
+> `POST /auth/magic-link` membawa `expires_in` untuk countdown klien. Kode
+> berumur sama dengan tautan (`MAGIC_LINK_TTL`), terkunci setelah 5
+> percobaan salah, dan permintaan baru meniadakan tautan + kode lama yang
+> belum dipakai (supersede).
 
 ## Context
 
@@ -272,3 +282,40 @@ Env baru:
 - TTL 15 menit dan rate limit 5/jam per email - angka final?
 - Perlu simpan IP peminta di tabel untuk audit, atau skip v1? Rekomendasi:
   skip; RemoteAddr di belakang reverse proxy menyesatkan.
+
+## Revisi 2026-10-28 - provider email pindah ke SMTP Sumopod (implicit TLS)
+
+> Bagian ini menggantikan desain JetEmail di atas untuk implementasi aktif.
+> Desain lama tetap disimpan sebagai rekam perancangan.
+
+- Keputusan: klien JetEmail REST diganti klien SMTP stdlib. Provider Sumopod:
+  host `smtp.sumopod.com`, port `465`, SSL `true` = implicit TLS, auth PLAIN.
+  Tanpa dep baru: semua dari stdlib (`net/smtp`, `crypto/tls`, `net/mail`,
+  `mime`, `encoding/base64`).
+- Env: `JETEMAIL_API_KEY` dihapus. Pengganti: `SMTP_HOST`, `SMTP_PORT`
+  (default `465`), `SMTP_USERNAME`, `SMTP_PASSWORD`. `MAIL_FROM` tetap:
+  amplop memakai `net/mail.ParseAddress`, header `From` mempertahankan
+  display name.
+- Mode: hanya implicit TLS/SSL (port 465). STARTTLS (587) tidak didukung:
+  port lain tetap dicoba dengan implicit TLS lalu gagal, tanpa fallback
+  STARTTLS atau plaintext.
+- Yang tidak berubah: port `mailer.Mailer`, `Message`, alur
+  `auth.Magic.Request`/`Verify`, hash token, TTL, rate limit, anti
+  enumerasi, dan kontrak HTTP.
+- `IdempotencyKey` hanya dipakai `LogMailer`; SMTP tidak punya idempotensi.
+- Dev tanpa `SMTP_HOST` tetap `LogMailer` (link ke log). Prod wajib
+  `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`; kosong =
+  panic saat boot.
+- Keamanan: `CRLF` di `To`/`Subject` ditolak sebelum koneksi (header
+  injection). Error kirim hanya menyebut tahap (`dial`, `auth`,
+  `mail from`, `rcpt`, `data`), tanpa password, username, token, body
+  pesan, atau respons server. `CR/LF` di manapun dalam `MAIL_FROM` ditolak
+  saat boot; header `From` dirender lewat `net/mail.Address.String`, jadi
+  display name non-ASCII keluar sebagai encoded word RFC 2047.
+- File: `internal/platform/mailer/jetemail.go` dihapus, `smtp.go` baru;
+  `internal/platform/config/config.go`, `internal/app/app.go`,
+  `.env-example`, `README.md`, dan `deploy/README.md` diselaraskan.
+- Verifikasi: gofmt/vet/test bersih, `make build-linux` ok, E2E memserver
+  dengan `LogMailer` (register -> magic link -> verify -> Bearer), dan probe
+  TLS ke `smtp.sumopod.com:465`: handshake TLS + EHLO sukses, lalu AUTH
+  ditolak karena kredensial contoh masih placeholder.

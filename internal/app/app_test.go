@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -330,20 +331,20 @@ func TestAppCORSAllowlist(t *testing.T) {
 		JWTSecret:     "test-secret-for-app-tests",
 		JWTAccessTTL:  24 * time.Hour,
 		JWTRefreshTTL: 24 * time.Hour,
-		CORSOrigins:   []string{"https://ai-sweg.my.id"},
+		CORSOrigins:   []string{"https://ai.swegrowth.id"},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(cfg, log, nil).Handler()
 
 	preflight := httptest.NewRequest(http.MethodOptions, "/users/register", nil)
-	preflight.Header.Set("Origin", "https://ai-sweg.my.id")
+	preflight.Header.Set("Origin", "https://ai.swegrowth.id")
 	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, preflight)
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("preflight status = %d, want %d", res.Code, http.StatusNoContent)
 	}
-	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai.swegrowth.id" {
 		t.Fatalf("preflight allow-origin = %q, want the frontend origin", got)
 	}
 	if res.Header().Get("Access-Control-Allow-Headers") == "" {
@@ -352,9 +353,9 @@ func TestAppCORSAllowlist(t *testing.T) {
 
 	res = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/categories", nil)
-	req.Header.Set("Origin", "https://ai-sweg.my.id")
+	req.Header.Set("Origin", "https://ai.swegrowth.id")
 	handler.ServeHTTP(res, req)
-	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai.swegrowth.id" {
 		t.Fatalf("GET allow-origin = %q, want the frontend origin", got)
 	}
 
@@ -380,7 +381,7 @@ func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
 		JWTAccessTTL:     24 * time.Hour,
 		JWTRefreshTTL:    24 * time.Hour,
 		MagicLinkTTL:     15 * time.Minute,
-		MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+		MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
 	}
 	log := slog.New(slog.NewTextHandler(&logBuf, nil))
 	handler := New(cfg, log, nil).Handler()
@@ -397,7 +398,7 @@ func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
 	}
 
 	logged := logBuf.String()
-	const prefix = "https://ai-sweg.my.id/login/magic?token="
+	const prefix = "https://ai.swegrowth.id/login/magic?token="
 	idx := strings.Index(logged, prefix)
 	if idx < 0 {
 		t.Fatalf("log output missing magic link prefix %q: %s", prefix, logged)
@@ -439,41 +440,101 @@ func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
 	}
 }
 
-func TestAppProdPanicsWhenJetEmailKeyOrBaseURLMissing(t *testing.T) {
+func TestAppPanicsWhenMailConfigMissing(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for name, cfg := range map[string]config.Config{
-		"missing_jetemail_key": {
+	validConfig := func() config.Config {
+		return config.Config{
 			Env:              "prod",
 			JWTSecret:        "prod-secret",
 			JWTAccessTTL:     time.Hour,
 			JWTRefreshTTL:    time.Hour,
-			MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+			MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
+			SMTPHost:         "smtp.sumopod.com",
+			SMTPPort:         "465",
+			SMTPUsername:     "user@sumopod.test",
+			SMTPPassword:     "secret",
 			MailFrom:         "SWEG-AI <noreply@ai-sweg.my.id>",
+		}
+	}
+	for name, tc := range map[string]struct {
+		mutate    func(*config.Config)
+		wantPanic string
+	}{
+		"missing_smtp_host": {
+			mutate:    func(c *config.Config) { c.SMTPHost = "" },
+			wantPanic: "app: empty SMTP_HOST in prod",
 		},
 		"missing_base_url": {
-			Env:            "prod",
-			JWTSecret:      "prod-secret",
-			JWTAccessTTL:   time.Hour,
-			JWTRefreshTTL:  time.Hour,
-			JetEmailAPIKey: "transactional_key",
-			MailFrom:       "SWEG-AI <noreply@ai-sweg.my.id>",
+			mutate:    func(c *config.Config) { c.MagicLinkBaseURL = "" },
+			wantPanic: "app: empty MAGIC_LINK_BASE_URL in prod",
 		},
 		"missing_mail_from": {
-			Env:              "prod",
-			JWTSecret:        "prod-secret",
-			JWTAccessTTL:     time.Hour,
-			JWTRefreshTTL:    time.Hour,
-			JetEmailAPIKey:   "transactional_key",
-			MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+			mutate:    func(c *config.Config) { c.MailFrom = "" },
+			wantPanic: "mailer: empty MAIL_FROM",
+		},
+		"dev_missing_smtp_username": {
+			mutate: func(c *config.Config) {
+				c.Env = "dev"
+				c.SMTPUsername = ""
+			},
+			wantPanic: "mailer: empty SMTP_USERNAME",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			cfg := validConfig()
+			tc.mutate(&cfg)
 			defer func() {
-				if recover() == nil {
+				got := recover()
+				if got == nil {
 					t.Fatalf("expected New() to panic for %s", name)
+				}
+				msg, ok := got.(string)
+				if !ok || !strings.Contains(msg, tc.wantPanic) {
+					t.Fatalf("panic = %v, want message containing %q", got, tc.wantPanic)
 				}
 			}()
 			_ = New(cfg, log, nil)
 		})
+	}
+}
+
+// TestAppBootWithSMTPConfigDoesNotDial proves New only validates SMTP settings.
+// The real SMTP mailer is wired, but boot must not open a connection.
+func TestAppBootWithSMTPConfigDoesNotDial(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	host, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener address: %v", err)
+	}
+
+	cfg := config.Config{
+		Service:          "sweg-ai-test",
+		Env:              "dev",
+		Version:          "test",
+		JWTSecret:        "test-secret-for-app-tests",
+		JWTAccessTTL:     24 * time.Hour,
+		JWTRefreshTTL:    24 * time.Hour,
+		MagicLinkTTL:     15 * time.Minute,
+		MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
+		SMTPHost:         host,
+		SMTPPort:         port,
+		SMTPUsername:     "user@sumopod.test",
+		SMTPPassword:     "secret",
+		MailFrom:         "SWEG-AI <noreply@ai-sweg.my.id>",
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_ = New(cfg, log, nil)
+
+	if tcpLn, ok := ln.(*net.TCPListener); ok {
+		_ = tcpLn.SetDeadline(time.Now().Add(100 * time.Millisecond))
+	}
+	conn, err := ln.Accept()
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("app.New opened an SMTP connection at boot")
 	}
 }

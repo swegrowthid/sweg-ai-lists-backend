@@ -1,4 +1,7 @@
-.PHONY: run build build-linux migrate-up migrate-down migrate-status vet test
+.PHONY: run build build-linux migrate-up migrate-down migrate-status vet test mailtest
+
+mailtest:
+	go run ./cmd/mailtest -to michaellapandio04@gmail.com
 
 run:
 	go run ./cmd/api

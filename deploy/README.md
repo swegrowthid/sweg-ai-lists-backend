@@ -30,15 +30,19 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
 
 3. Tulis `/etc/sweg-ai/env` dengan mode 600 milik root. Isi lihat
    `.env-example`: `DB_URL`, `JWT_SECRET`, `JWT_ACCESS_TTL`,
-   `JWT_REFRESH_TTL`, `JETEMAIL_API_KEY`, `MAIL_FROM`,
-   `MAGIC_LINK_TTL`, `MAGIC_LINK_BASE_URL`. Tambah `APP_ENV=prod` dan
-   `APP_ADDR=:8080`. Di `APP_ENV=prod`, `JETEMAIL_API_KEY`, `MAIL_FROM`,
-   dan `MAGIC_LINK_BASE_URL` wajib terisi (kosong = proses panic saat boot).
-   Verifikasi domain pengirim (`ai-sweg.my.id`: SPF, DKIM, DMARC) dan buat
-   key transactional (`transactional_...`) di `dash.jetemail.com` sebelum
-   mengaktifkan prod.
+   `JWT_REFRESH_TTL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+   `SMTP_PASSWORD`, `MAIL_FROM`, `MAGIC_LINK_TTL`,
+   `MAGIC_LINK_BASE_URL`. Tambah `APP_ENV=prod` dan `APP_ADDR=:8080`.
+   Di `APP_ENV=prod`, `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+   `MAIL_FROM`, dan `MAGIC_LINK_BASE_URL` wajib terisi (kosong = proses panic
+   saat boot). Ambil kredensial SMTP dari dashboard Sumopod: host
+   `smtp.sumopod.com`, port `465`, SSL aktif. Koneksi hanya implicit TLS
+   (SSL); port STARTTLS seperti 587 tidak didukung. Pastikan domain pengirim
+   aktif di sisi Sumopod sebelum mengaktifkan prod. Publikasikan juga SPF,
+   DKIM, DMARC, dan Null MX untuk domain `MAIL_FROM`. Tanpa itu email OTP
+   masuk spam. Ikuti `deploy/EMAIL-DNS-CHECKLIST.md` langkah demi langkah.
    Set `DOCS_UI=1` bila UI Scalar di `/docs` mau hidup di prod.
-   Set `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis boleh
+   Set `CORS_ORIGINS=https://ai.swegrowth.id` agar frontend statis boleh
    memanggil API dari browser (tanpa ini register/login kena blok CORS).
 
 4. Pasang unit service:

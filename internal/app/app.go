@@ -95,13 +95,13 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 		magicBaseURL = auth.DefaultMagicLinkBaseURL
 	}
 	var mail mailer.Mailer
-	if strings.TrimSpace(cfg.JetEmailAPIKey) == "" {
+	if strings.TrimSpace(cfg.SMTPHost) == "" {
 		if cfg.IsProd() {
-			panic("app: empty JETEMAIL_API_KEY in prod")
+			panic("app: empty SMTP_HOST in prod")
 		}
 		mail = mailer.NewLogMailer(log)
 	} else {
-		mail = mailer.NewJetEmail(cfg.JetEmailAPIKey, cfg.MailFrom)
+		mail = mailer.NewSMTP(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.MailFrom)
 	}
 
 	authHandler := auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log)

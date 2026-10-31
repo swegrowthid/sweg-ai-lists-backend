@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,9 @@ func NewMemoryMagicStore() *MemoryMagicStore {
 	return &MemoryMagicStore{records: map[string]MagicLinkRecord{}}
 }
 
-// Save implements MagicStore and prunes rows older than 24 hours past use or expiry.
+// Save implements MagicStore. It supersedes any still-active link for the same
+// email so only the newest request stays usable, and prunes rows older than 24
+// hours past use or expiry.
 func (m *MemoryMagicStore) Save(_ context.Context, rec MagicLinkRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -29,6 +32,13 @@ func (m *MemoryMagicStore) Save(_ context.Context, rec MagicLinkRecord) error {
 		rec.CreatedAt = now
 	}
 	rec.Email = strings.ToLower(strings.TrimSpace(rec.Email))
+
+	for hash, existing := range m.records {
+		if strings.EqualFold(existing.Email, rec.Email) && existing.UsedAt == nil {
+			existing.UsedAt = &now
+			m.records[hash] = existing
+		}
+	}
 
 	cutoff := rec.CreatedAt.Add(-magicLinkStaleAge)
 	for hash, existing := range m.records {
@@ -61,6 +71,42 @@ func (m *MemoryMagicStore) Consume(_ context.Context, tokenHash string, now time
 	used := now.UTC()
 	rec.UsedAt = &used
 	m.records[tokenHash] = rec
+	return rec, nil
+}
+
+// ConsumeCode implements MagicStore. The code hash is compared in constant
+// time; each miss increments CodeAttempts and the row locks at
+// magicCodeMaxAttempts.
+func (m *MemoryMagicStore) ConsumeCode(_ context.Context, email, codeHash string, now time.Time) (MagicLinkRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var rec MagicLinkRecord
+	found := false
+	for _, existing := range m.records {
+		if !strings.EqualFold(existing.Email, email) || existing.UsedAt != nil || !existing.ExpiresAt.After(now) {
+			continue
+		}
+		if !found || existing.CreatedAt.After(rec.CreatedAt) {
+			rec = existing
+			found = true
+		}
+	}
+	if !found {
+		return MagicLinkRecord{}, ErrMagicLinkInvalid
+	}
+	if rec.CodeAttempts >= magicCodeMaxAttempts {
+		return MagicLinkRecord{}, ErrMagicLinkInvalid
+	}
+	if subtle.ConstantTimeCompare([]byte(rec.CodeHash), []byte(codeHash)) != 1 {
+		rec.CodeAttempts++
+		m.records[rec.TokenHash] = rec
+		return MagicLinkRecord{}, ErrMagicLinkInvalid
+	}
+
+	used := now.UTC()
+	rec.UsedAt = &used
+	m.records[rec.TokenHash] = rec
 	return rec, nil
 }
 
