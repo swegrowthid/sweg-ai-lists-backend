@@ -79,6 +79,18 @@ make build
 make build-linux
 ```
 
+Kirim contoh email OTP ke inbox nyata. Perintah ini memakai template dan SMTP
+yang sama dengan `POST /auth/magic-link`, tetapi kode dan tautannya acak, jadi
+tidak bisa dipakai login. Pakai untuk cek format dan posisi inbox.
+
+```sh
+make mailtest                                   # ke michaellapandio04@gmail.com
+go run ./cmd/mailtest -to nama@example.com      # ke alamat lain
+```
+
+`SMTP_*` dan `MAIL_FROM` dibaca dari `.env`. Jika `SMTP_HOST` kosong, perintah
+berhenti dengan pesan jelas.
+
 Server scratch tanpa DB:
 
 ```sh
@@ -108,9 +120,43 @@ Server jalan di `127.0.0.1:8790`. Data hilang saat proses mati.
 | `SMTP_PASSWORD` | kosong | Password SMTP. Dibaca apa adanya: tanpa trim, tanpa tanda kutip. Wajib saat `SMTP_HOST` terisi. |
 | `MAIL_FROM` | kosong | Pengirim email, mis. `swegai <noreply@ai-sweg.my.id>`. Alamat amplop diambil dari `<...>`, display name tetap di header `From`. Wajib saat kirim aktif. |
 | `MAGIC_LINK_TTL` | `15m` | Umur tautan dan kode login magic link satu kali pakai. |
-| `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Wajib di prod. |
+| `MAGIC_LINK_BASE_URL` | `http://localhost:4321/login/magic` (dev) | URL halaman konfirmasi frontend untuk magic link. Di prod: `https://ai.swegrowth.id/login/magic`. Wajib di prod. |
 
-Prod butuh `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis bisa panggil API dari browser.
+Prod butuh `CORS_ORIGINS=https://ai.swegrowth.id` agar frontend statis bisa panggil API dari browser. Halaman konfirmasi login ada di `MAGIC_LINK_BASE_URL=https://ai.swegrowth.id/login/magic`.
+
+## Deliverability email
+
+Email OTP masuk spam bila domain pengirim tidak terautentikasi. Kode aplikasi
+tidak bisa memperbaiki itu. Autentikasi hidup di DNS domain `MAIL_FROM`.
+
+Wajib ada sebelum kirim aktif di prod:
+
+| Record | Nama | Isi | Arti |
+| --- | --- | --- | --- |
+| SPF | `ai-sweg.my.id` (TXT) | `v=spf1 include:<host-spf-sumopod> ~all` | Server Sumopod boleh kirim atas nama domain. |
+| DKIM | `<selector>._domainkey.ai-sweg.my.id` (TXT) | kunci publik dari dashboard Sumopod | Tanda tangan pesan cocok dengan domain. |
+| DMARC | `_dmarc.ai-sweg.my.id` (TXT) | `v=DMARC1; p=none; rua=mailto:dmarc@ai-sweg.my.id; adkim=s; aspf=s` | Laporan agregat; mulai `p=none`, naik ke `quarantine` lalu `reject`. |
+| MX | `ai-sweg.my.id` | `0 .` bila domain tidak terima email | Null MX menandai domain kirim saja. Balasan ke `noreply@` memantul, dan itu normal. |
+
+Cek dari mesin lokal:
+
+```sh
+dig +short TXT ai-sweg.my.id
+dig +short TXT <selector>._domainkey.ai-sweg.my.id
+dig +short TXT _dmarc.ai-sweg.my.id
+```
+
+Nilai `<host-spf-sumopod>` dan `<selector>` diambil dari dashboard Sumopod.
+Jangan menebak isinya. Langkah lengkap plus verifikasi: `deploy/EMAIL-DNS-CHECKLIST.md`.
+
+Hal lain yang menjaga email tetap di inbox:
+
+- Kirim hanya dari domain sendiri. Jangan pakai alamat `gmail.com` sebagai `MAIL_FROM`.
+- Samakan domain `From`, `Return-Path`, dan `Message-ID`. Mailer memakai domain `MAIL_FROM` untuk `Message-ID` dan `Reply-To`, bukan `SMTP_HOST`.
+- Header `Auto-Submitted: auto-generated` dan `X-Auto-Response-Suppress: All` menandai pesan mesin, bukan kampanye.
+- HTML tanpa gambar, tanpa piksel pelacak, tanpa skrip, dan tanpa kata promosi. Bagian teks memuat semua fakta yang sama.
+- Subjek pendek dan faktual: `swegai sign-in code`.
+- Domain baru butuh waktu reputasi. Kirim volume kecil dulu, lalu naik perlahan.
 
 ## Endpoint
 
@@ -286,6 +332,7 @@ Magic link (`POST /auth/magic-link` lalu `POST /auth/magic-link/verify`) menyedi
 - `POST /auth/magic-link/verify` terima `{token}` ATAU `{email, code}`, mengonsumsinya secara atomik (`UPDATE ... WHERE used_at IS NULL AND expires_at > now()`), dan mengeluarkan `TokenPair` yang sama dengan `/auth/login`.
 - Permintaan baru untuk email yang sama meniadakan tautan dan kode lama yang belum dipakai; hanya permintaan terbaru yang berlaku.
 - Rate limit 5 permintaan per email per jam (`429 too many requests`).
+- Isi email: kode "1234 5678", tautan, umur berlaku, dan baris keamanan. Bagian teks dan HTML sama isinya. Tanpa gambar, tanpa pelacak, tanpa kata promosi. Lihat bagian Deliverability email.
 
 Refresh token bawa `jti`. Rotasi bersifat atomik. Token lama yang dipakai ulang membunuh seluruh keluarga token user itu. Logout cabut token itu.
 

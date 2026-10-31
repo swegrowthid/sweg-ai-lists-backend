@@ -31,7 +31,7 @@ const (
 	magicCodeDigits      = 8
 	magicCodeMaxAttempts = 5
 	magicCodeSpace       = 100_000_000
-	magicMailSubject     = "Your swegai sign-in code"
+	magicMailSubject     = "swegai sign-in code"
 )
 
 var (

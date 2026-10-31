@@ -38,9 +38,11 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
    saat boot). Ambil kredensial SMTP dari dashboard Sumopod: host
    `smtp.sumopod.com`, port `465`, SSL aktif. Koneksi hanya implicit TLS
    (SSL); port STARTTLS seperti 587 tidak didukung. Pastikan domain pengirim
-   aktif di sisi Sumopod sebelum mengaktifkan prod.
+   aktif di sisi Sumopod sebelum mengaktifkan prod. Publikasikan juga SPF,
+   DKIM, DMARC, dan Null MX untuk domain `MAIL_FROM`. Tanpa itu email OTP
+   masuk spam. Ikuti `deploy/EMAIL-DNS-CHECKLIST.md` langkah demi langkah.
    Set `DOCS_UI=1` bila UI Scalar di `/docs` mau hidup di prod.
-   Set `CORS_ORIGINS=https://ai-sweg.my.id` agar frontend statis boleh
+   Set `CORS_ORIGINS=https://ai.swegrowth.id` agar frontend statis boleh
    memanggil API dari browser (tanpa ini register/login kena blok CORS).
 
 4. Pasang unit service:

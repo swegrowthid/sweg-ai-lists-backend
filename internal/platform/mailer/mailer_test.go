@@ -28,7 +28,7 @@ const (
 
 var (
 	testSMTPNow      = time.Date(2026, 10, 28, 15, 4, 5, 0, time.UTC)
-	testMessageID    = regexp.MustCompile(`^<[0-9a-f]{32}@127\.0\.0\.1>$`)
+	testMessageID    = regexp.MustCompile(`^<[0-9a-f]{32}@ai-sweg\.my\.id>$`)
 	testSubjectASCII = "Tautan login SWEG-AI"
 )
 
@@ -325,7 +325,16 @@ func TestSMTPSendDeliversMultipartMessage(t *testing.T) {
 		t.Fatalf("From = %q, want display name SWEG-AI and bare sender address", fromHeader)
 	}
 	if got := msg.Header.Get("Message-ID"); !testMessageID.MatchString(got) {
-		t.Fatalf("Message-ID = %q, want <32 hex chars>@127.0.0.1", got)
+		t.Fatalf("Message-ID = %q, want <32 hex chars>@ai-sweg.my.id", got)
+	}
+	if got := msg.Header.Get("Reply-To"); got != "noreply@ai-sweg.my.id" {
+		t.Fatalf("Reply-To = %q, want the bare sender address", got)
+	}
+	if got := msg.Header.Get("Auto-Submitted"); got != "auto-generated" {
+		t.Fatalf("Auto-Submitted = %q, want auto-generated", got)
+	}
+	if got := msg.Header.Get("X-Auto-Response-Suppress"); got != "All" {
+		t.Fatalf("X-Auto-Response-Suppress = %q, want All", got)
 	}
 
 	parts := readSentParts(t, msg)
@@ -383,6 +392,24 @@ func TestSMTPSendEncodesNonASCIISubject(t *testing.T) {
 	}
 	if decoded != subject {
 		t.Fatalf("Subject decodes to %q, want %q", decoded, subject)
+	}
+}
+
+func TestSMTPMessageIDUsesSenderDomainNotSMTPHost(t *testing.T) {
+	srv := newFakeSMTPServer(t)
+	client := newTestSMTPFrom(t, srv, "SWEG-AI <Login@AI-Sweg.My.ID>")
+
+	if err := client.Send(context.Background(), Message{
+		To:      "budi@test.id",
+		Subject: testSubjectASCII,
+		Text:    "body",
+	}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	got := mustReadMessage(t, srv.session().data).Header.Get("Message-ID")
+	if !strings.HasSuffix(got, "@ai-sweg.my.id>") {
+		t.Fatalf("Message-ID = %q, want the lowercased sender domain so DMARC and DKIM align", got)
 	}
 }
 

@@ -331,20 +331,20 @@ func TestAppCORSAllowlist(t *testing.T) {
 		JWTSecret:     "test-secret-for-app-tests",
 		JWTAccessTTL:  24 * time.Hour,
 		JWTRefreshTTL: 24 * time.Hour,
-		CORSOrigins:   []string{"https://ai-sweg.my.id"},
+		CORSOrigins:   []string{"https://ai.swegrowth.id"},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := New(cfg, log, nil).Handler()
 
 	preflight := httptest.NewRequest(http.MethodOptions, "/users/register", nil)
-	preflight.Header.Set("Origin", "https://ai-sweg.my.id")
+	preflight.Header.Set("Origin", "https://ai.swegrowth.id")
 	preflight.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, preflight)
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("preflight status = %d, want %d", res.Code, http.StatusNoContent)
 	}
-	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai.swegrowth.id" {
 		t.Fatalf("preflight allow-origin = %q, want the frontend origin", got)
 	}
 	if res.Header().Get("Access-Control-Allow-Headers") == "" {
@@ -353,9 +353,9 @@ func TestAppCORSAllowlist(t *testing.T) {
 
 	res = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/categories", nil)
-	req.Header.Set("Origin", "https://ai-sweg.my.id")
+	req.Header.Set("Origin", "https://ai.swegrowth.id")
 	handler.ServeHTTP(res, req)
-	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai-sweg.my.id" {
+	if got := res.Header().Get("Access-Control-Allow-Origin"); got != "https://ai.swegrowth.id" {
 		t.Fatalf("GET allow-origin = %q, want the frontend origin", got)
 	}
 
@@ -381,7 +381,7 @@ func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
 		JWTAccessTTL:     24 * time.Hour,
 		JWTRefreshTTL:    24 * time.Hour,
 		MagicLinkTTL:     15 * time.Minute,
-		MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+		MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
 	}
 	log := slog.New(slog.NewTextHandler(&logBuf, nil))
 	handler := New(cfg, log, nil).Handler()
@@ -398,7 +398,7 @@ func TestAppMagicLinkEndToEndWithLogMailer(t *testing.T) {
 	}
 
 	logged := logBuf.String()
-	const prefix = "https://ai-sweg.my.id/login/magic?token="
+	const prefix = "https://ai.swegrowth.id/login/magic?token="
 	idx := strings.Index(logged, prefix)
 	if idx < 0 {
 		t.Fatalf("log output missing magic link prefix %q: %s", prefix, logged)
@@ -448,7 +448,7 @@ func TestAppPanicsWhenMailConfigMissing(t *testing.T) {
 			JWTSecret:        "prod-secret",
 			JWTAccessTTL:     time.Hour,
 			JWTRefreshTTL:    time.Hour,
-			MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+			MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
 			SMTPHost:         "smtp.sumopod.com",
 			SMTPPort:         "465",
 			SMTPUsername:     "user@sumopod.test",
@@ -519,7 +519,7 @@ func TestAppBootWithSMTPConfigDoesNotDial(t *testing.T) {
 		JWTAccessTTL:     24 * time.Hour,
 		JWTRefreshTTL:    24 * time.Hour,
 		MagicLinkTTL:     15 * time.Minute,
-		MagicLinkBaseURL: "https://ai-sweg.my.id/login/magic",
+		MagicLinkBaseURL: "https://ai.swegrowth.id/login/magic",
 		SMTPHost:         host,
 		SMTPPort:         port,
 		SMTPUsername:     "user@sumopod.test",

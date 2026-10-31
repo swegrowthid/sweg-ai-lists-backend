@@ -32,6 +32,7 @@ type SMTP struct {
 	password     string
 	fromHeader   string
 	envelopeFrom string
+	idDomain     string
 	timeout      time.Duration
 
 	// dial and now are test seams. NewSMTP sets the TLS dialer and time.Now;
@@ -85,10 +86,22 @@ func NewSMTP(host, port, username, password, from string) *SMTP {
 		password:     password,
 		fromHeader:   sender.String(),
 		envelopeFrom: sender.Address,
+		idDomain:     addressDomain(sender.Address),
 		timeout:      sendTimeout,
 		dial:         tlsDialer.DialContext,
 		now:          time.Now,
 	}
+}
+
+// addressDomain returns the domain part of a bare address, falling back to
+// "localhost" so Message-ID stays syntactically valid.
+func addressDomain(address string) string {
+	if _, domain, ok := strings.Cut(address, "@"); ok {
+		if domain = strings.ToLower(strings.TrimSpace(domain)); domain != "" {
+			return domain
+		}
+	}
+	return "localhost"
 }
 
 // Send delivers one multipart MIME email over SMTP. Every failure wraps
@@ -182,9 +195,14 @@ func (s *SMTP) buildMessage(to *mail.Address, subject string, msg Message) ([]by
 	b.Grow(len(msg.Text) + len(msg.HTML) + 512)
 	fmt.Fprintf(&b, "From: %s\r\n", s.fromHeader)
 	fmt.Fprintf(&b, "To: %s\r\n", to.Address)
+	fmt.Fprintf(&b, "Reply-To: %s\r\n", s.envelopeFrom)
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject))
 	fmt.Fprintf(&b, "Date: %s\r\n", s.now().Format(time.RFC1123Z))
-	fmt.Fprintf(&b, "Message-ID: <%s@%s>\r\n", messageID, s.host)
+	fmt.Fprintf(&b, "Message-ID: <%s@%s>\r\n", messageID, s.idDomain)
+	// Machine-generated mail: tell filters and vacation autoresponders that no
+	// human reads replies, which keeps transactional mail out of bulk heuristics.
+	b.WriteString("Auto-Submitted: auto-generated\r\n")
+	b.WriteString("X-Auto-Response-Suppress: All\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=%q\r\n", boundary)
 	b.WriteString("\r\n")

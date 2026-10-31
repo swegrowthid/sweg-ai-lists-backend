@@ -323,7 +323,7 @@ func newMagicTestRig() *magicTestRig {
 		tokens,
 		refreshStore,
 		mail,
-		"https://ai-sweg.my.id/login/magic",
+		"https://ai.swegrowth.id/login/magic",
 		15*time.Minute,
 	)
 
@@ -766,5 +766,52 @@ func TestMagicLinkNewRequestSupersedesPrevious(t *testing.T) {
 		`{"email":"budi@test.id","code":"`+codeB+`"}`, "")
 	if res.Code != http.StatusOK {
 		t.Fatalf("newest code status = %d, want 200; body = %s", res.Code, res.Body.String())
+	}
+}
+
+// TestMagicLinkMailStaysTransactional protects the deliverability shape of the
+// sign-in email: both parts carry the code, the link, and the expiry, and the
+// markup has no remote asset, no tracking pixel, and no marketing wording.
+func TestMagicLinkMailStaysTransactional(t *testing.T) {
+	rig := newMagicTestRig()
+	res := doJSON(t, rig.mux, http.MethodPost, "/users/register",
+		`{"username":"budi","email":"budi@test.id","password":"password"}`, "")
+	if res.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", res.Code, http.StatusCreated)
+	}
+	res = doJSON(t, rig.mux, http.MethodPost, "/auth/magic-link", `{"email":"budi@test.id"}`, "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("request magic link status = %d, want 200", res.Code)
+	}
+
+	msg := rig.mailer.last()
+	code := displayMagicCode(extractCodeFromMail(t, msg))
+	token := extractTokenFromMail(t, msg)
+
+	for name, body := range map[string]string{"text": msg.Text, "html": msg.HTML} {
+		if body == "" {
+			t.Fatalf("%s part is empty", name)
+		}
+		if !strings.Contains(body, code) {
+			t.Fatalf("%s part misses the grouped code %q", name, code)
+		}
+		if !strings.Contains(body, token) {
+			t.Fatalf("%s part misses the magic link token", name)
+		}
+		if !strings.Contains(body, "15 minutes") {
+			t.Fatalf("%s part misses the expiry", name)
+		}
+	}
+
+	if strings.Contains(msg.HTML, "<img") || strings.Contains(msg.HTML, "<script") {
+		t.Fatal("HTML part must not contain images or scripts")
+	}
+	for _, word := range []string{"promo", "discount", "offer", "subscribe", "newsletter", "click here"} {
+		if strings.Contains(strings.ToLower(msg.Text), word) || strings.Contains(strings.ToLower(msg.HTML), word) {
+			t.Fatalf("mail contains marketing wording %q", word)
+		}
+	}
+	if strings.Contains(msg.Text, "<") {
+		t.Fatalf("text part contains markup: %q", msg.Text)
 	}
 }
