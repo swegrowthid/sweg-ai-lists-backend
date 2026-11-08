@@ -2,13 +2,21 @@
 // repository. The three markdown files there are the database: a scheduler
 // fetches and parses them once at startup and then every day at midnight
 // server time, and keeps the result as an in-memory snapshot. No SQL table
-// mirrors the catalog; the markdown stays the single source of truth.
+// mirrors the catalog; the markdown stays the single source of truth. Usage
+// votes live apart in the tool_votes SQL table and join the snapshot only at
+// response time.
 package tools
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // Tool is one catalog row. Common fields exist on every row; the per-category
 // fields are nil or empty when the source table does not carry the column.
+// Votes and Voted are view-only: the parser leaves them zero and the service
+// fills them from the VoteStore before responding, so the snapshot never
+// carries vote state.
 type Tool struct {
 	ID           string   `json:"id"`
 	Category     string   `json:"category"`
@@ -21,6 +29,8 @@ type Tool struct {
 	Subscribe    *bool    `json:"subscribe,omitempty"`
 	MinSpend     string   `json:"min_spend,omitempty"`
 	AIFeatures   []string `json:"ai_features,omitempty"`
+	Votes        int      `json:"votes"`
+	Voted        bool     `json:"voted"`
 }
 
 // Category maps one source markdown file to one catalog category. Count is
@@ -41,6 +51,9 @@ const (
 	SortName = "name"
 	// SortUpdated orders by the source updated date, YYYY-MM-DD.
 	SortUpdated = "updated"
+	// SortVotes orders by the vote count. The service sorts after it
+	// enriches the rows, because the snapshot store holds no votes.
+	SortVotes = "votes"
 )
 
 // Sort directions accepted by ListFilter.Order.
@@ -94,6 +107,38 @@ type ListResult struct {
 	Meta PageMeta `json:"meta"`
 }
 
+// VoteSummary carries the vote state of one tool for one viewer.
+type VoteSummary struct {
+	// Votes is how many users voted for the tool.
+	Votes int
+	// Voted is whether the viewer voted for the tool.
+	Voted bool
+}
+
+// VoteResult is the POST/DELETE /tools/{id}/votes body: the latest count and
+// the viewer status after the operation.
+type VoteResult struct {
+	ToolID string `json:"tool_id"`
+	Votes  int    `json:"votes"`
+	Voted  bool   `json:"voted"`
+}
+
+// VoteStore is the vote persistence port. Service code depends on it, never on
+// a concrete store. Add and Remove are idempotent: repeating them changes
+// nothing and reports created or removed false.
+type VoteStore interface {
+	// Add records one usage vote. Created is false for a duplicate vote.
+	Add(ctx context.Context, userID, toolID string) (created bool, err error)
+
+	// Remove withdraws one usage vote. Removed is false when no vote exists.
+	Remove(ctx context.Context, userID, toolID string) (removed bool, err error)
+
+	// Summaries returns the vote count and the viewer status per tool id.
+	// Tool ids without votes are absent from the map; an empty viewer id
+	// means an anonymous reader with Voted false everywhere.
+	Summaries(ctx context.Context, viewerID string, toolIDs []string) (map[string]VoteSummary, error)
+}
+
 // Sentinel errors for the E channel. Handlers map them to status codes.
 var (
 	// ErrNotFound: no tool carries the requested id.
@@ -102,4 +147,6 @@ var (
 	ErrUnknownCategory = errors.New("tools: unknown category")
 	// ErrInvalidInput: a filter carries a byte the catalog cannot hold.
 	ErrInvalidInput = errors.New("tools: invalid input")
+	// ErrUnknownUser: the voter id names no known user.
+	ErrUnknownUser = errors.New("tools: unknown user")
 )

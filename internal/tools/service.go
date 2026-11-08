@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -51,13 +52,32 @@ type source struct {
 // Service owns the tools use-cases. No HTTP, no SQL here.
 type Service struct {
 	store  Store
+	votes  VoteStore
 	source source
 }
 
 // NewService wires the store to the live GitHub source. Nil store is a
-// programmer bug, so panic early.
+// programmer bug, so panic early. Votes start empty in memory; production
+// replaces them through NewServiceWithVotes.
 func NewService(store Store) *Service {
-	return newServiceWithSource(store, source{})
+	svc := newServiceWithSource(store, source{})
+	svc.votes = NewMemoryVoteStore()
+	return svc
+}
+
+// NewServiceWithVotes wires the snapshot store and the vote store together.
+// A nil vote store falls back to memory. Nil snapshot store is a programmer
+// bug, so panic early.
+func NewServiceWithVotes(store Store, votes VoteStore) *Service {
+	if store == nil {
+		panic("tools: nil Store")
+	}
+	if votes == nil {
+		votes = NewMemoryVoteStore()
+	}
+	svc := newServiceWithSource(store, source{})
+	svc.votes = votes
+	return svc
 }
 
 // newServiceWithSource fills the source defaults and wires the store. Tests
@@ -75,12 +95,21 @@ func newServiceWithSource(store Store, src source) *Service {
 	if src.client == nil {
 		src.client = &http.Client{Timeout: fetchTimeout}
 	}
-	return &Service{store: store, source: src}
+	return &Service{store: store, votes: NewMemoryVoteStore(), source: src}
 }
 
 // List validates the filter, orders the snapshot as asked, and returns one
 // page of it together with the metadata a client needs to fetch the next one.
+// It is the anonymous-reader form of ListFor: votes are counted, voted stays
+// false everywhere.
 func (s *Service) List(ctx context.Context, filter ListFilter) (ListResult, error) {
+	return s.ListFor(ctx, filter, "")
+}
+
+// ListFor is List with a viewer: the vote count is filled for every row and
+// voted marks the rows the viewer voted for. An empty viewerID means an
+// anonymous reader.
+func (s *Service) ListFor(ctx context.Context, filter ListFilter, viewerID string) (ListResult, error) {
 	if strings.ContainsRune(filter.Query, 0) || strings.ContainsRune(filter.Category, 0) {
 		return ListResult{}, ErrInvalidInput
 	}
@@ -94,20 +123,152 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (ListResult, erro
 	}
 	filter.Query = strings.ToLower(strings.TrimSpace(filter.Query))
 
-	rows, err := s.store.List(ctx, filter)
+	// The snapshot store holds no votes, so sort=votes must not reach it:
+	// fetch catalog order, enrich, then sort here.
+	sortVotes := filter.Sort == SortVotes
+	storeFilter := filter
+	if sortVotes {
+		storeFilter.Sort = ""
+		storeFilter.Order = ""
+	}
+
+	rows, err := s.store.List(ctx, storeFilter)
 	if err != nil {
 		return ListResult{}, err
+	}
+	if len(rows) > 0 {
+		sums, err := s.voteStore().Summaries(ctx, viewerID, toolIDsOf(rows))
+		if err != nil {
+			return ListResult{}, err
+		}
+		for i := range rows {
+			if sum, ok := sums[rows[i].ID]; ok {
+				rows[i].Votes = sum.Votes
+				rows[i].Voted = sum.Voted
+			}
+		}
+	}
+	if sortVotes {
+		sortVoteRows(rows, filter.Order)
 	}
 	return pageRows(rows, filter.Page, filter.PerPage), nil
 }
 
 // Get returns one tool by id, case-insensitive (p-001 finds P-001).
+// It is the anonymous-reader form of GetFor.
 func (s *Service) Get(ctx context.Context, id string) (Tool, error) {
+	return s.GetFor(ctx, id, "")
+}
+
+// GetFor is Get with a viewer: votes holds the total count and voted marks
+// whether the viewer voted for the tool.
+func (s *Service) GetFor(ctx context.Context, id, viewerID string) (Tool, error) {
 	id = strings.ToUpper(strings.TrimSpace(id))
 	if id == "" || strings.ContainsRune(id, 0) {
 		return Tool{}, ErrNotFound
 	}
-	return s.store.Get(ctx, id)
+	tool, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Tool{}, err
+	}
+	sums, err := s.voteStore().Summaries(ctx, viewerID, []string{tool.ID})
+	if err != nil {
+		return Tool{}, err
+	}
+	if sum, ok := sums[tool.ID]; ok {
+		tool.Votes = sum.Votes
+		tool.Voted = sum.Voted
+	}
+	return tool, nil
+}
+
+// Vote records one usage vote. The tool id is uppercased and trimmed, then
+// checked against the snapshot; an unknown id answers ErrNotFound. An empty
+// user id answers ErrInvalidInput. Created is false for a duplicate vote.
+// An unknown user id answers ErrUnknownUser.
+func (s *Service) Vote(ctx context.Context, userID, toolID string) (VoteResult, bool, error) {
+	if strings.TrimSpace(userID) == "" || strings.ContainsRune(userID, 0) {
+		return VoteResult{}, false, ErrInvalidInput
+	}
+	toolID = strings.ToUpper(strings.TrimSpace(toolID))
+	if toolID == "" || strings.ContainsRune(toolID, 0) {
+		return VoteResult{}, false, ErrNotFound
+	}
+	if _, err := s.store.Get(ctx, toolID); err != nil {
+		return VoteResult{}, false, err
+	}
+	created, err := s.voteStore().Add(ctx, userID, toolID)
+	if err != nil {
+		return VoteResult{}, false, err
+	}
+	return s.voteResult(ctx, userID, toolID, true), created, nil
+}
+
+// Unvote withdraws one usage vote. It validates like Vote but never fails
+// when no vote exists: removing a missing vote still answers the latest
+// summary with voted false.
+func (s *Service) Unvote(ctx context.Context, userID, toolID string) (VoteResult, error) {
+	if strings.TrimSpace(userID) == "" || strings.ContainsRune(userID, 0) {
+		return VoteResult{}, ErrInvalidInput
+	}
+	toolID = strings.ToUpper(strings.TrimSpace(toolID))
+	if toolID == "" || strings.ContainsRune(toolID, 0) {
+		return VoteResult{}, ErrNotFound
+	}
+	if _, err := s.store.Get(ctx, toolID); err != nil {
+		return VoteResult{}, err
+	}
+	if _, err := s.voteStore().Remove(ctx, userID, toolID); err != nil {
+		return VoteResult{}, err
+	}
+	return s.voteResult(ctx, userID, toolID, false), nil
+}
+
+// voteResult reads the latest summary for one tool after a vote mutation.
+// fallbackVoted covers a store that answers no row for the id.
+func (s *Service) voteResult(ctx context.Context, userID, toolID string, fallbackVoted bool) VoteResult {
+	result := VoteResult{ToolID: toolID, Voted: fallbackVoted}
+	sums, err := s.voteStore().Summaries(ctx, userID, []string{toolID})
+	if err != nil {
+		return result
+	}
+	if sum, ok := sums[toolID]; ok {
+		result.Votes = sum.Votes
+		result.Voted = sum.Voted
+	}
+	return result
+}
+
+// voteStore returns the vote port, defaulting to memory when unset.
+func (s *Service) voteStore() VoteStore {
+	if s.votes == nil {
+		s.votes = NewMemoryVoteStore()
+	}
+	return s.votes
+}
+
+// toolIDsOf collects the snapshot ids for one Summaries call.
+func toolIDsOf(rows []Tool) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids
+}
+
+// sortVoteRows orders enriched rows by vote count, tie-broken by id ascending
+// so a page boundary never repeats or drops a row.
+func sortVoteRows(rows []Tool, order string) {
+	desc := order != OrderAsc
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Votes != rows[j].Votes {
+			if desc {
+				return rows[i].Votes > rows[j].Votes
+			}
+			return rows[i].Votes < rows[j].Votes
+		}
+		return rows[i].ID < rows[j].ID
+	})
 }
 
 // Categories returns the static category mapping with live row counts.
@@ -211,6 +372,13 @@ func normalizeListOptions(filter *ListFilter) error {
 	case SortName, SortUpdated:
 		if filter.Order == "" {
 			filter.Order = OrderAsc
+		}
+		if filter.Order != OrderAsc && filter.Order != OrderDesc {
+			return ErrInvalidInput
+		}
+	case SortVotes:
+		if filter.Order == "" {
+			filter.Order = OrderDesc
 		}
 		if filter.Order != OrderAsc && filter.Order != OrderDesc {
 			return ErrInvalidInput

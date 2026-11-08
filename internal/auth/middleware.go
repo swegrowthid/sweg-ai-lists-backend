@@ -37,6 +37,27 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// OptionalAuth wraps next: a valid access token becomes a Principal in ctx,
+// but a missing or invalid token continues anonymously instead of answering
+// 401. Readers use it so GET endpoints always serve while still filling the
+// viewer state when the caller logged in.
+func (m *Middleware) OptionalAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenStr, ok := bearerToken(r)
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		claims, err := m.tokens.ParseAccess(tokenStr)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx := WithPrincipal(r.Context(), Principal{UserID: claims.Subject, Username: claims.Username})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func bearerToken(r *http.Request) (string, bool) {
 	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
