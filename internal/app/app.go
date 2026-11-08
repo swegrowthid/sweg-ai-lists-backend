@@ -67,7 +67,9 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	}
 	userSvc := user.NewService(store)
 	tokens := auth.NewTokens(cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	requireAuth := auth.NewMiddleware(tokens).RequireAuth
+	authMW := auth.NewMiddleware(tokens)
+	requireAuth := authMW.RequireAuth
+	optionalAuth := authMW.OptionalAuth
 	userHandler := user.NewHandler(userSvc, log)
 	userHandler.SetAuth(
 		func(ctx context.Context) (string, bool) {
@@ -120,9 +122,14 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 	news.NewHandler(newsSvc, log).RegisterRoutes(mux)
 
 	// Tools catalog has no Postgres adapter: the source markdown files are the
-	// database, the store holds only the parsed snapshot.
-	toolsSvc := tools.NewService(tools.NewMemoryStore())
-	tools.NewHandler(toolsSvc, log).RegisterRoutes(mux)
+	// database, the store holds only the parsed snapshot. Usage votes are the
+	// separate SQL table, memory-backed when no pool exists.
+	var voteStore tools.VoteStore = tools.NewMemoryVoteStore()
+	if pool != nil {
+		voteStore = tools.NewPostgresVoteStore(pool.DB)
+	}
+	toolsSvc := tools.NewServiceWithVotes(tools.NewMemoryStore(), voteStore)
+	tools.NewHandler(toolsSvc, log).RegisterRoutesWithAuth(mux, requireAuth, optionalAuth)
 
 	// Daily term journal works the same way: one markdown file per month in the
 	// source repo is the database, and the store holds the parsed snapshot.

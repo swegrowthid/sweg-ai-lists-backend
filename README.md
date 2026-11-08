@@ -29,7 +29,7 @@ mux -> auth.Handler -> auth.Service -> user.Service + tokens + RefreshStore
 mux -> auth.Handler -> auth.Magic -> user.Service + MagicStore + mailer.Mailer + tokens + RefreshStore
 mux -> post.Handler -> post.Service -> post.Store
 mux -> news.Handler -> news.Service -> news.Store
-mux -> tools.Handler -> tools.Service -> tools.Store
+mux -> tools.Handler -> tools.Service -> tools.Store + tools.VoteStore (memory tanpa pool, Postgres bila pool ada; migrasi 00011)
 mux -> dailyterm.Handler -> dailyterm.Service -> dailyterm.Store
 mux -> wanted.Handler -> wanted.Service -> wanted.Store + post.Service
 ```
@@ -181,9 +181,11 @@ Hal lain yang menjaga email tetap di inbox:
 | `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
 | `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
 | `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
-| `GET` | `/tools` | tidak | Daftar tools AI urut katalog. Filter `?category=` dan `?q=` (nama, situs, status, min spend, fitur AI). |
+| `GET` | `/tools` | tidak (Bearer opsional untuk `voted`) | Daftar tools AI urut katalog. Tiap item bawa `votes` + `voted` (`false` untuk anonim). Filter `?category=` dan `?q=` (nama, situs, status, min spend, fitur AI). Sort `?sort=votes` default `desc`. |
 | `GET` | `/tools/categories` | tidak | Mapping kategori tools: slug, prefix, file sumber, count. |
-| `GET` | `/tools/{id}` | tidak | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. |
+| `GET` | `/tools/{id}` | tidak (Bearer opsional untuk `voted`) | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. Bawa `votes` + `voted`. |
+| `POST` | `/tools/{id}/votes` | ya | Vote tool. Baru jawab 201, duplikat idempoten jawab 200. Body `VoteResult`. |
+| `DELETE` | `/tools/{id}/votes` | ya | Cabut vote sendiri. Selalu 200 + `VoteResult`. |
 | `GET` | `/daily-terms` | tidak | Satu bulan daily term. Filter `?month=YYYY-MM`. |
 | `GET` | `/daily-terms/months` | tidak | Bulan daily term yang tersedia: month_key, nama, file sumber, count. |
 | `GET` | `/daily-terms/{id}` | tidak | Detail satu term, id `2026-01-sieve-algorithm-or-sieve-of-eratosthenes`. |
@@ -270,6 +272,14 @@ snapshot terakhir tetap tersaji dan run berikutnya mencoba lagi.
 - Satu baris rusak tidak membatalkan file; file tanpa tabel ID membatalkan
   seluruh sync sehingga kategori tidak pernah kosong separuh.
 - Sumber atau kolom berubah = ubah `internal/tools/parser.go`, bukan skema.
+- Vote: satu user login boleh vote satu tool satu kali (`tool_id` uppercase
+  dinormalisasi). `POST /tools/{id}/votes` vote baru jawab 201 dengan
+  `VoteResult`; duplikat idempoten jawab 200. `DELETE /tools/{id}/votes`
+  selalu jawab 200 + `VoteResult` terbaru. Tulis wajib login; baca publik:
+  `GET /tools` dan `GET /tools/{id}` membawa `votes` (selalu ada) dan `voted`
+  (`false` untuk anonim). `?sort=votes` default `desc`, tie-break id
+  ascending. Validasi snapshot: tool tak dikenal jawab 404 `tool not found`.
+  Vote disimpan di tabel `tool_votes` (migrasi `00011`).
 
 ## Daily Term
 
@@ -351,6 +361,8 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00007_create_news.sql` | Tabel `news`. Kunci unik `url`. |
 | `00008_create_wanted_posts.sql` | Tabel `wanted_posts`. Kunci utama `post_id`, hapus post ikut hapus baris. |
 | `00009_create_magic_links.sql` | Tabel `magic_links`. Kunci utama `token_hash` (SHA-256 hex) + index `(email, created_at)`. |
+| `00010_magic_link_codes.sql` | Kolom kode login `magic_links`. |
+| `00011_create_tool_votes.sql` | Tabel `tool_votes`. PK `(tool_id, user_id)`, FK user cascade, CHECK format ID, index `user_id`. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 

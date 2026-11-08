@@ -416,6 +416,9 @@ paths:
       summary: Daftar tools AI dari repo tools-ai-swe-growth
       operationId: listTools
       tags: [tools]
+      security:
+        - bearerAuth: []
+        - {}
       parameters:
         - name: group
           in: query
@@ -452,14 +455,18 @@ paths:
             Kunci urutan. Tanpa parameter ini baris tetap urut katalog sumber.
             `updated` memakai tanggal update sumber. Tanggal itu satu-satunya
             stempel waktu di katalog, jadi ia mewakili waktu tambah dan ubah.
+            `votes` mengurutkan berdasarkan jumlah vote; default `desc` untuk
+            `sort=votes`. Tie-break `sort=votes` memakai id ascending.
           schema:
             type: string
-            enum: [name, updated]
+            enum: [name, updated, votes]
           example: name
         - name: order
           in: query
           required: false
-          description: Arah urutan. Hanya berlaku bila `sort` terisi. Default asc.
+          description: >-
+            Arah urutan. Hanya berlaku bila `sort` terisi. Default asc,
+            kecuali `sort=votes` yang default desc.
           schema:
             type: string
             enum: [asc, desc]
@@ -490,7 +497,9 @@ paths:
             Satu halaman tool plus meta paging. `meta.total` menghitung seluruh baris
             yang cocok dengan filter, bukan hanya baris pada halaman ini. Halaman
             kosong tetap membawa meta, jadi klien bisa membedakan "habis" dari
-            "tidak ada yang cocok".
+            "tidak ada yang cocok". Tiap item membawa `votes` (selalu ada) dan
+            `voted` (`false` untuk anonim atau token invalid). Token Bearer
+            opsional: tanpa token tetap 200.
           content:
             application/json:
               schema:
@@ -526,6 +535,9 @@ paths:
       summary: Detail satu tool berdasarkan id sumber
       operationId: getTool
       tags: [tools]
+      security:
+        - bearerAuth: []
+        - {}
       parameters:
         - name: id
           in: path
@@ -536,13 +548,102 @@ paths:
           example: P-001
       responses:
         "200":
-          description: Satu tool dari snapshot
+          description: >-
+            Satu tool dari snapshot. Membawa `votes` (selalu ada) dan `voted`
+            (`false` untuk anonim atau token invalid). Tanpa token tetap 200.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Tool"
         "404":
           description: Tool tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /tools/{id}/votes:
+    post:
+      summary: Vote tool - satu user satu vote
+      operationId: voteTool
+      tags: [tools]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id tool dari tabel sumber, case-insensitive.
+          schema:
+            type: string
+          example: P-001
+      responses:
+        "201":
+          description: >-
+            Vote baru tercatat. Body `VoteResult` berisi jumlah vote terbaru
+            dan status vote user setelah operasi.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteResult"
+        "200":
+          description: >-
+            Duplikat idempoten: user sudah vote tool ini. Body `VoteResult`
+            sama seperti 201 tanpa menambah baris.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteResult"
+        "401":
+          description: >-
+            Token hilang, tidak valid, kadaluarsa, atau user dari token tidak
+            ada di database.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Tool tidak ditemukan di snapshot
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+    delete:
+      summary: Cabut vote tool milik sendiri
+      operationId: unvoteTool
+      tags: [tools]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id tool dari tabel sumber, case-insensitive.
+          schema:
+            type: string
+          example: P-001
+      responses:
+        "200":
+          description: >-
+            Vote dicabut idempoten. Selalu 200 dengan `VoteResult` terbaru,
+            termasuk bila vote tidak ada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoteResult"
+        "401":
+          description: >-
+            Token hilang, tidak valid, kadaluarsa, atau user dari token tidak
+            ada di database.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Tool tidak ditemukan di snapshot
           content:
             text/plain:
               schema:
@@ -1199,7 +1300,7 @@ components:
           description: Jumlah baris pada snapshot sync terakhir. 0 sebelum sync pertama.
     Tool:
       type: object
-      required: [id, category, name, website, website_label, status, updated]
+      required: [id, category, name, website, website_label, status, updated, votes, voted]
       properties:
         id:
           type: string
@@ -1244,6 +1345,15 @@ components:
           items:
             type: string
           example: ["Chat", "Agent"]
+        votes:
+          type: integer
+          minimum: 0
+          description: Jumlah seluruh user yang vote tool ini. Selalu ada, minimal 0.
+          example: 12
+        voted:
+          type: boolean
+          description: True bila user yang meminta sudah vote tool ini. False untuk anonim atau token invalid.
+          example: true
     PageMeta:
       type: object
       required: [page, per_page, total, total_pages]
@@ -1275,6 +1385,23 @@ components:
             $ref: "#/components/schemas/Tool"
         meta:
           $ref: "#/components/schemas/PageMeta"
+    VoteResult:
+      type: object
+      required: [tool_id, votes, voted]
+      properties:
+        tool_id:
+          type: string
+          description: Id tool uppercase dari sumber.
+          example: P-001
+        votes:
+          type: integer
+          minimum: 0
+          description: Jumlah vote terbaru untuk tool ini.
+          example: 12
+        voted:
+          type: boolean
+          description: Status vote user yang meminta setelah operasi.
+          example: true
     AddWantedRequest:
       type: object
       required: [slug]
