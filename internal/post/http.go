@@ -49,22 +49,11 @@ type createCategoryRequest struct {
 }
 
 type createPostRequest struct {
-	Slug       string                  `json:"slug"`
-	Title      string                  `json:"title"`
-	Category   string                  `json:"category"`
-	Derivative string                  `json:"derivative"`
-	Items      []createPostItemRequest `json:"items"`
-}
-
-// createPostItemRequest keeps every payload field as a pointer, so the service
-// can tell "key absent" from "key sent empty". A key that does not belong to
-// the item's kind is rejected even when it is empty.
-type createPostItemRequest struct {
-	Kind     string  `json:"kind"`
-	BodyText *string `json:"body_text"`
-	URL      *string `json:"url"`
-	Filename *string `json:"filename"`
-	MIME     *string `json:"mime"`
+	Slug       string `json:"slug"`
+	Title      string `json:"title"`
+	Category   string `json:"category"`
+	Derivative string `json:"derivative"`
+	Value      string `json:"value"`
 }
 
 func (h *Handler) listCategories(w http.ResponseWriter, r *http.Request) {
@@ -140,17 +129,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	items := make([]ItemInput, 0, len(request.Items))
-	for _, item := range request.Items {
-		items = append(items, ItemInput{
-			Kind:     Kind(item.Kind),
-			BodyText: item.BodyText,
-			URL:      item.URL,
-			Filename: item.Filename,
-			MIME:     item.MIME,
-		})
-	}
-
 	created, err := h.svc.Create(r.Context(), CreatePostInput{
 		Slug:           request.Slug,
 		Title:          request.Title,
@@ -158,7 +136,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		AuthorUsername: principal.Username,
 		CategorySlug:   request.Category,
 		DerivativeSlug: request.Derivative,
-		Items:          items,
+		Value:          request.Value,
 	})
 	if err != nil {
 		h.writeError(w, r, err)

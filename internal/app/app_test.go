@@ -98,11 +98,7 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 		"title": "Setup Claude Code",
 		"category": "coding-agent",
 		"derivative": "claude-code",
-		"items": [
-			{"kind": "markdown", "body_text": "# Intro"},
-			{"kind": "link", "url": "https://example.com/docs"},
-			{"kind": "file", "filename": "notes.md", "body_text": "# Notes"}
-		]
+		"value": "# Intro"
 	}`, pair.AccessToken)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("create post status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
@@ -111,8 +107,8 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create post response: %v", err)
 	}
-	if len(created.Items) != 3 {
-		t.Fatalf("created items = %d, want 3", len(created.Items))
+	if len(created.Items) != 1 || created.Items[0].Value != "# Intro" {
+		t.Fatalf("created items = %+v, want the one item with the sent value", created.Items)
 	}
 	if len(created.Categories) != 2 || created.Categories[0].Slug != "coding-agent" || created.Categories[1].Slug != "claude-code" {
 		t.Fatalf("created categories = %+v, want the category then its derivative", created.Categories)
@@ -129,8 +125,8 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 	if found.ID != created.ID {
 		t.Fatalf("detail id = %q, want %q", found.ID, created.ID)
 	}
-	if len(found.Items) != 3 {
-		t.Fatalf("detail items = %d, want 3", len(found.Items))
+	if len(found.Items) != 1 || found.Items[0].Value != "# Intro" {
+		t.Fatalf("detail items = %+v, want the one item with the sent value", found.Items)
 	}
 
 	res = doJSON(t, handler, http.MethodGet, "/posts?category=coding-agent", "", "")

@@ -149,22 +149,11 @@ func (m *MemoryStore) Create(_ context.Context, input CreatePostInput) (Post, er
 	if err != nil {
 		return Post{}, fmt.Errorf("post: generate post id: %w", err)
 	}
-	items := make([]Item, 0, len(input.Items))
-	for _, item := range input.Items {
-		itemID, err := id.New()
-		if err != nil {
-			return Post{}, fmt.Errorf("post: generate item id: %w", err)
-		}
-		items = append(items, Item{
-			ID:       itemID,
-			Kind:     item.Kind,
-			Position: item.Position,
-			BodyText: cloneText(item.BodyText),
-			URL:      cloneText(item.URL),
-			Filename: cloneText(item.Filename),
-			MIME:     cloneText(item.MIME),
-		})
+	itemID, err := id.New()
+	if err != nil {
+		return Post{}, fmt.Errorf("post: generate item id: %w", err)
 	}
+	items := []Item{{ID: itemID, Position: 0, Value: input.Value}}
 
 	created := Post{
 		ID:             postID,
@@ -300,9 +289,7 @@ func clonePost(source Post, withItems bool) Post {
 		return out
 	}
 	out.Items = make([]Item, len(source.Items))
-	for index, item := range source.Items {
-		out.Items[index] = cloneItem(item)
-	}
+	copy(out.Items, source.Items)
 	return out
 }
 
@@ -311,17 +298,6 @@ func clonePost(source Post, withItems bool) Post {
 func cloneCategory(source Category) Category {
 	out := source
 	out.ParentSlug = cloneText(source.ParentSlug)
-	return out
-}
-
-// cloneItem copies an item and every payload pointer, so a caller can never
-// write into stored state through a shared pointer.
-func cloneItem(source Item) Item {
-	out := source
-	out.BodyText = cloneText(source.BodyText)
-	out.URL = cloneText(source.URL)
-	out.Filename = cloneText(source.Filename)
-	out.MIME = cloneText(source.MIME)
 	return out
 }
 

@@ -176,7 +176,7 @@ Hal lain yang menjaga email tetap di inbox:
 | `POST` | `/categories` | ya | Buat category atau derivative. |
 | `GET` | `/posts` | tidak | Daftar post, tanpa items. Filter `?category=` dan `?q=`. |
 | `POST` | `/posts` | ya | Buat post. Langsung published. |
-| `GET` | `/posts/{slug}` | tidak | Detail post dengan items urut position. |
+| `GET` | `/posts/{slug}` | tidak | Detail post dengan satu item isi. |
 | `GET` | `/wanted` | tidak | Daftar post wanted, tanpa items, terbaru ditandai dulu. |
 | `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
 | `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
@@ -203,12 +203,8 @@ Seed bawaan: `coding`, `creative`, `presentation` (semua induk).
 - `category` tidak boleh derivative. Derivative harus anak dari category yang sama.
 - `?category=<slug>` ikut cocokkan turunan. Filter induk temukan post berderivative.
 - Slug: huruf kecil, angka, tanda hubung. Maks 100. Title maks 200. Name maks 100.
-- Items: 1 sampai 20. Urutan array jadi urutan tampil. Client tidak kirim position.
-- `body_text` maks 64 KiB per item. Simpan byte-exact, tanpa trim.
-- Satu kind = satu bentuk payload. Field milik kind lain ditolak walau kosong. `null` berarti absen dan boleh.
-- `kind=link`: hanya `url`. Wajib `http` atau `https` plus host.
-- `kind=markdown` atau `text`: hanya `body_text`.
-- `kind=file`: `body_text` + `filename`. `mime` opsional, default `text/markdown`.
+- `value` wajib, tidak boleh blank setelah trim. Maks 64 KiB. Simpan byte-exact, tanpa trim.
+- Satu post menyimpan tepat satu item di position 0 berisi `value`.
 - Byte NUL ditolak di semua field teks.
 - Slug post bentrok jawab 409. Category tak dikenal jawab 400 `unknown category`.
 
@@ -219,9 +215,7 @@ Contoh minimal:
   "slug": "first-post",
   "title": "First Post",
   "category": "coding",
-  "items": [
-    { "kind": "link", "url": "https://example.com/docs" }
-  ]
+  "value": "# First Post\n\nhttps://example.com/docs"
 }
 ```
 
@@ -230,7 +224,7 @@ Tiga teks 400 menunjuk lapisan gagal:
 | Body | Lapisan |
 | --- | --- |
 | `invalid request body` | Decode JSON: key asing, JSON rusak, body > 1 MiB. |
-| `invalid input` | Validasi service: slug, title, bentuk item, URL, batas. |
+| `invalid input` | Validasi service: slug, title, value, batas. |
 | `unknown category` | Lookup store: slug category atau derivative tidak ada. |
 
 ## News
@@ -363,6 +357,7 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00009_create_magic_links.sql` | Tabel `magic_links`. Kunci utama `token_hash` (SHA-256 hex) + index `(email, created_at)`. |
 | `00010_magic_link_codes.sql` | Kolom kode login `magic_links`. |
 | `00011_create_tool_votes.sql` | Tabel `tool_votes`. PK `(tool_id, user_id)`, FK user cascade, CHECK format ID, index `user_id`. |
+| `00012_post_items_value.sql` | `post_items` jadi satu kolom `value`. Backfill dari `body_text`/`url`, kolom kind lama dihapus. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 

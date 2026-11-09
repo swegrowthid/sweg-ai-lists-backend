@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,27 +28,23 @@ func newListFixture(t *testing.T) listFixture {
 	createDerivative(t, svc, "alpha-child", "Aa Child", "alpha")
 	return listFixture{
 		svc: svc,
-		p1:  seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", "", 2),
-		p2:  seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child", 3),
-		p3:  seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", "", 4),
+		p1:  seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", ""),
+		p2:  seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child"),
+		p3:  seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", ""),
 	}
 }
 
-// seedPost creates one post through the service with markdown items. The
-// derivative is empty for a post that picks only its top-level category.
-func seedPost(t *testing.T, svc *Service, slug, title, category, derivative string, itemCount int) Post {
+// seedPost creates one post through the service. The derivative is empty for
+// a post that picks only its top-level category.
+func seedPost(t *testing.T, svc *Service, slug, title, category, derivative string) Post {
 	t.Helper()
-	items := make([]ItemInput, 0, itemCount)
-	for index := 0; index < itemCount; index++ {
-		items = append(items, ItemInput{Kind: KindMarkdown, BodyText: text("# " + slug + " " + strconv.Itoa(index))})
-	}
 	created, err := svc.Create(context.Background(), CreatePostInput{
 		Slug:           slug,
 		Title:          title,
 		AuthorID:       "user-1",
 		CategorySlug:   category,
 		DerivativeSlug: derivative,
-		Items:          items,
+		Value:          "# " + slug,
 	})
 	if err != nil {
 		t.Fatalf("Create(%q) error = %v", slug, err)
@@ -205,12 +200,12 @@ func TestListLeavesItemsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(%q) error = %v", fixture.p2.Slug, err)
 	}
-	if len(found.Items) != 3 {
-		t.Fatalf("detail items = %d, want 3", len(found.Items))
+	if len(found.Items) != 1 {
+		t.Fatalf("detail items = %d, want 1", len(found.Items))
 	}
 }
 
-func TestFindBySlugReturnsCategoriesAndItemsInDisplayOrder(t *testing.T) {
+func TestFindBySlugReturnsCategoriesAndItem(t *testing.T) {
 	fixture := newListFixture(t)
 
 	found, err := fixture.svc.Get(context.Background(), "claude-code-hooks")
@@ -223,14 +218,11 @@ func TestFindBySlugReturnsCategoriesAndItemsInDisplayOrder(t *testing.T) {
 	if got := namesInOrder(found.Categories); got != "Alpha,Aa Child" {
 		t.Fatalf("category names = %q, want the category first even though the derivative name sorts first", got)
 	}
-	if len(found.Items) != 3 {
-		t.Fatalf("len(items) = %d, want 3", len(found.Items))
+	if len(found.Items) != 1 || found.Items[0].Position != 0 {
+		t.Fatalf("items = %+v, want the one item at position 0", found.Items)
 	}
-	if got := positionsInOrder(found.Items); got != "0,1,2" {
-		t.Fatalf("item positions = %q, want 0,1,2", got)
-	}
-	if got := textValue(t, "items[0].body_text", found.Items[0].BodyText); got != "# claude-code-hooks 0" {
-		t.Fatalf("items[0].body_text = %q, want the first markdown body", got)
+	if got := found.Items[0].Value; got != "# claude-code-hooks" {
+		t.Fatalf("items[0].value = %q, want the markdown body", got)
 	}
 }
 
@@ -315,9 +307,9 @@ func TestListHandlerReturnsPostsWithoutItems(t *testing.T) {
 	createCategory(t, svc, "alpha", "Alpha")
 	createCategory(t, svc, "beta", "Beta")
 	createDerivative(t, svc, "alpha-child", "Aa Child", "alpha")
-	seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", "", 2)
-	seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child", 3)
-	seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", "", 4)
+	seedPost(t, svc, "setup-claude-code", "Setup Claude Code", "alpha", "")
+	seedPost(t, svc, "claude-code-hooks", "Claude Code Hooks", "alpha", "alpha-child")
+	seedPost(t, svc, "postgres-notes", "Postgres Notes", "beta", "")
 
 	res := doJSON(t, mux, http.MethodGet, "/posts", "", "")
 	if res.Code != http.StatusOK {
@@ -370,7 +362,7 @@ func TestListHandlerReturnsPostsWithoutItems(t *testing.T) {
 	}
 }
 
-func TestGetHandlerReturnsItemsInPositionOrder(t *testing.T) {
+func TestGetHandlerReturnsItemValue(t *testing.T) {
 	mux, store := newTestMuxWithStore()
 	svc := NewService(store)
 	createCategory(t, svc, "alpha", "Alpha")
@@ -380,11 +372,7 @@ func TestGetHandlerReturnsItemsInPositionOrder(t *testing.T) {
 		Title:        "Setup Claude Code",
 		AuthorID:     "user-1",
 		CategorySlug: "alpha",
-		Items: []ItemInput{
-			{Kind: KindMarkdown, BodyText: text("# Intro")},
-			{Kind: KindLink, URL: text("https://ampcode.com/docs")},
-			{Kind: KindFile, BodyText: text("# Notes\n\nInline file."), Filename: text("notes.md")},
-		},
+		Value:        "# Intro\n\nhttps://ampcode.com/docs",
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -404,22 +392,11 @@ func TestGetHandlerReturnsItemsInPositionOrder(t *testing.T) {
 	if got := slugsInOrder(found.Categories); got != "alpha" {
 		t.Fatalf("category slugs = %q, want alpha", got)
 	}
-	if got := positionsInOrder(found.Items); got != "0,1,2" {
-		t.Fatalf("item positions = %q, want 0,1,2", got)
+	if len(found.Items) != 1 || found.Items[0].Position != 0 {
+		t.Fatalf("items = %+v, want the one item at position 0", found.Items)
 	}
-	for index, want := range []Kind{KindMarkdown, KindLink, KindFile} {
-		if got := found.Items[index].Kind; got != want {
-			t.Fatalf("items[%d].kind = %q, want %q", index, got, want)
-		}
-	}
-	if got := textValue(t, "items[2].body_text", found.Items[2].BodyText); got != "# Notes\n\nInline file." {
-		t.Fatalf("items[2].body_text = %q, want the inline file body", got)
-	}
-	if got := textValue(t, "items[2].filename", found.Items[2].Filename); got != "notes.md" {
-		t.Fatalf("items[2].filename = %q, want notes.md", got)
-	}
-	if got := textValue(t, "items[1].url", found.Items[1].URL); got != "https://ampcode.com/docs" {
-		t.Fatalf("items[1].url = %q, want the link", got)
+	if got := found.Items[0].Value; got != "# Intro\n\nhttps://ampcode.com/docs" {
+		t.Fatalf("items[0].value = %q, want the sent value", got)
 	}
 }
 
@@ -459,8 +436,8 @@ func TestEscapeLikePattern(t *testing.T) {
 func TestListQueryTreatsLikeMetacharactersLiterally(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
-	seedPost(t, svc, "percent-title", "100% done", "alpha", "", 1)
-	seedPost(t, svc, "plain-title", "100x done", "alpha", "", 1)
+	seedPost(t, svc, "percent-title", "100% done", "alpha", "")
+	seedPost(t, svc, "plain-title", "100x done", "alpha", "")
 
 	posts, err := svc.List(context.Background(), ListFilter{Query: "100%"})
 	if err != nil {
@@ -527,7 +504,7 @@ func TestCreatePostCategoryOrderPutsTheCategoryFirst(t *testing.T) {
 		AuthorID:       "user-1",
 		CategorySlug:   "zeta-parent",
 		DerivativeSlug: "alpha-der",
-		Items:          []ItemInput{{Kind: KindText, BodyText: text("body")}},
+		Value:          "body",
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)

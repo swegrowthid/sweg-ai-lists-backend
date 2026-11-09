@@ -11,7 +11,7 @@ import (
 func TestDeleteRemovesOwnPost(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
-	created := seedPost(t, svc, "my-post", "My Post", "alpha", "", 2)
+	created := seedPost(t, svc, "my-post", "My Post", "alpha", "")
 
 	if err := svc.Delete(context.Background(), "my-post", created.AuthorID); err != nil {
 		t.Fatalf("Delete() error = %v", err)
@@ -31,7 +31,7 @@ func TestDeleteRemovesOwnPost(t *testing.T) {
 func TestDeleteForeignPostForbidden(t *testing.T) {
 	svc := NewService(NewMemoryStore())
 	createCategory(t, svc, "alpha", "Alpha")
-	created := seedPost(t, svc, "my-post", "My Post", "alpha", "", 1)
+	created := seedPost(t, svc, "my-post", "My Post", "alpha", "")
 
 	// another author's delete is refused and the post survives
 	if err := svc.Delete(context.Background(), "my-post", "user-2"); !errors.Is(err, ErrForbidden) {
@@ -62,7 +62,7 @@ func TestDeleteHandlerRemovesOwnPost(t *testing.T) {
 	if res.Code != http.StatusCreated {
 		t.Fatalf("POST /categories status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
-	res = doJSON(t, mux, http.MethodPost, "/posts", `{"title":"My Post","category":"alpha","items":[{"kind":"markdown","body_text":"# Body"}]}`, token)
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{"title":"My Post","category":"alpha","value":"# Body"}`, token)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
@@ -109,7 +109,7 @@ func TestDeleteHandlerForeignPost(t *testing.T) {
 	if res.Code != http.StatusCreated {
 		t.Fatalf("POST /categories status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
-	res = doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"my-post","title":"My Post","category":"alpha","items":[{"kind":"markdown","body_text":"# Body"}]}`, ownerToken)
+	res = doJSON(t, mux, http.MethodPost, "/posts", `{"slug":"my-post","title":"My Post","category":"alpha","value":"# Body"}`, ownerToken)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("POST /posts status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
 	}
