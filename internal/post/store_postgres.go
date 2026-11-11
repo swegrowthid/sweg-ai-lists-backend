@@ -209,6 +209,37 @@ func (s *PostgresStore) FindBySlug(ctx context.Context, slug string) (Post, erro
 	return findBySlug(ctx, s.db, slug)
 }
 
+// Update implements Store. One transaction rewrites the title, swaps the
+// category links, and rewrites the one item, so a partial update never lands
+// in the table, then reads the post back like Create does. No matching row is
+// ErrNotFound.
+func (s *PostgresStore) Update(ctx context.Context, input UpdatePostInput) (Post, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Post{}, fmt.Errorf("post: begin update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once the commit succeeds
+
+	postID, err := updatePost(ctx, tx, input)
+	if err != nil {
+		return Post{}, err
+	}
+	if err := relinkCategories(ctx, tx, postID, input.CategorySlugs); err != nil {
+		return Post{}, err
+	}
+	if err := updateItem(ctx, tx, postID, input.Value); err != nil {
+		return Post{}, err
+	}
+	updated, err := findBySlug(ctx, tx, input.Slug)
+	if err != nil {
+		return Post{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Post{}, fmt.Errorf("post: commit update: %w", err)
+	}
+	return updated, nil
+}
+
 // Delete implements Store. post_categories and post_items reference posts
 // with ON DELETE CASCADE, so one statement removes the post with its links
 // and items. No matching row is ErrNotFound.
@@ -276,6 +307,47 @@ func insertItem(ctx context.Context, q querier, postID, value string) error {
 	`, postID, value)
 	if err != nil {
 		return fmt.Errorf("post: insert item: %w", err)
+	}
+	return nil
+}
+
+// updatePost rewrites the post's title and returns its id. The updated_at
+// trigger bumps the timestamp. No matching row is ErrNotFound.
+func updatePost(ctx context.Context, q querier, input UpdatePostInput) (string, error) {
+	var postID string
+	err := q.QueryRowContext(ctx, `
+		UPDATE posts SET title = $2 WHERE slug = $1
+		RETURNING id
+	`, input.Slug, input.Title).Scan(&postID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("post: update post: %w", err)
+	}
+	return postID, nil
+}
+
+// relinkCategories swaps the post's category links for the resolved set:
+// delete the old links, then link like on create, so a missing slug fails the
+// same count check.
+func relinkCategories(ctx context.Context, q querier, postID string, slugs []string) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM post_categories WHERE post_id = $1`, postID); err != nil {
+		return fmt.Errorf("post: unlink categories: %w", err)
+	}
+	return linkCategories(ctx, q, postID, slugs)
+}
+
+// updateItem rewrites the post's single item at position 0. The upsert keeps
+// the stored item id and restores the one-item row for a post that lost it.
+func updateItem(ctx context.Context, q querier, postID, value string) error {
+	_, err := q.ExecContext(ctx, `
+		INSERT INTO post_items (post_id, position, value)
+		VALUES ($1, 0, $2)
+		ON CONFLICT (post_id, position) DO UPDATE SET value = EXCLUDED.value
+	`, postID, value)
+	if err != nil {
+		return fmt.Errorf("post: update item: %w", err)
 	}
 	return nil
 }

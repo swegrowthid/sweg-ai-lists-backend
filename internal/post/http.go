@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) 
 	mux.HandleFunc("GET /posts", h.list)
 	mux.Handle("POST /posts", protect(http.HandlerFunc(h.create)))
 	mux.HandleFunc("GET /posts/{slug}", h.get)
+	mux.Handle("PUT /posts/{slug}", protect(http.HandlerFunc(h.update)))
 	mux.Handle("DELETE /posts/{slug}", protect(http.HandlerFunc(h.delete)))
 }
 
@@ -50,6 +51,13 @@ type createCategoryRequest struct {
 
 type createPostRequest struct {
 	Slug       string `json:"slug"`
+	Title      string `json:"title"`
+	Category   string `json:"category"`
+	Derivative string `json:"derivative"`
+	Value      string `json:"value"`
+}
+
+type updatePostRequest struct {
 	Title      string `json:"title"`
 	Category   string `json:"category"`
 	Derivative string `json:"derivative"`
@@ -143,6 +151,33 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	// The author comes from the verified token, never from the body; the
+	// owner check itself lives in the service.
+	principal, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+
+	var request updatePostRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	updated, err := h.svc.Update(r.Context(), r.PathValue("slug"), principal.UserID, UpdatePostInput{
+		Title:          request.Title,
+		CategorySlug:   request.Category,
+		DerivativeSlug: request.Derivative,
+		Value:          request.Value,
+	})
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {

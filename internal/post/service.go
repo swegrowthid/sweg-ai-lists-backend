@@ -39,6 +39,7 @@ type Store interface {
 	Create(ctx context.Context, input CreatePostInput) (Post, error)
 	List(ctx context.Context, filter ListFilter) ([]Post, error)
 	FindBySlug(ctx context.Context, slug string) (Post, error)
+	Update(ctx context.Context, input UpdatePostInput) (Post, error)
 	Delete(ctx context.Context, slug string) error
 }
 
@@ -148,6 +149,37 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 		return s.store.Create(ctx, create)
 	}
 	return s.createWithGeneratedSlug(ctx, create)
+}
+
+// Update replaces the mutable fields of one post: title, categories, and the
+// one item's value. Only the author may update: a missing post is ErrNotFound,
+// another author's post ErrForbidden. The slug, author, and created_at stay
+// put. The field rules are the create rules.
+func (s *Service) Update(ctx context.Context, slug, authorID string, input UpdatePostInput) (Post, error) {
+	found, err := s.Get(ctx, slug)
+	if err != nil {
+		return Post{}, err
+	}
+	if found.AuthorID != authorID {
+		return Post{}, ErrForbidden
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" || utf8.RuneCountInString(title) > maxTitleLen || hasNUL(title) {
+		return Post{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(input.Value) == "" || len(input.Value) > maxValueLen || hasNUL(input.Value) {
+		return Post{}, ErrInvalidInput
+	}
+	categorySlugs, err := s.resolveCategoryChoice(ctx, input.CategorySlug, input.DerivativeSlug)
+	if err != nil {
+		return Post{}, err
+	}
+	return s.store.Update(ctx, UpdatePostInput{
+		Slug:          found.Slug,
+		Title:         title,
+		CategorySlugs: categorySlugs,
+		Value:         input.Value,
+	})
 }
 
 // Delete removes one post. Only the author may delete: a missing post is
