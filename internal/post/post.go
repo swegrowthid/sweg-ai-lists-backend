@@ -17,38 +17,17 @@ type Category struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// Kind is the payload shape of one item. One item carries exactly one shape.
-type Kind string
-
-const (
-	// KindMarkdown keeps markdown text inline in body_text.
-	KindMarkdown Kind = "markdown"
-
-	// KindText keeps plain text inline in body_text.
-	KindText Kind = "text"
-
-	// KindLink keeps one absolute URL in url.
-	KindLink Kind = "link"
-
-	// KindFile keeps a small file inline: body_text plus filename and mime.
-	KindFile Kind = "file"
-)
-
-// Item is one ordered block of a post. Only the fields of its Kind are set;
-// the rest stay nil, so JSON never shows a field that carries no meaning.
+// Item is the content of a post. A post stores exactly one item at position 0;
+// the slice shape stays so reads can grow back to multiple items later.
 type Item struct {
-	ID       string  `json:"id"`
-	Kind     Kind    `json:"kind"`
-	Position int     `json:"position"`
-	BodyText *string `json:"body_text,omitempty"`
-	URL      *string `json:"url,omitempty"`
-	Filename *string `json:"filename,omitempty"`
-	MIME     *string `json:"mime,omitempty"`
+	ID       string `json:"id"`
+	Position int    `json:"position"`
+	Value    string `json:"value"`
 }
 
 // Post is one published post with its categories. There is no draft state:
-// every stored post is live. Items stay empty on list responses and are
-// filled by the detail read only.
+// every stored post is live. Items holds the single stored item on detail
+// responses and stays empty on list responses.
 type Post struct {
 	ID       string `json:"id"`
 	Slug     string `json:"slug"`
@@ -71,7 +50,7 @@ var (
 	ErrConflict = errors.New("post: slug already in use")
 
 	// ErrInvalidInput signals input that breaks the slug, title, category,
-	// or item-kind contract.
+	// or value contract.
 	ErrInvalidInput = errors.New("post: invalid input")
 
 	// ErrUnknownCategory signals a category slug that does not exist.
@@ -100,7 +79,7 @@ type CreateCategoryInput struct {
 // derivative, and DerivativeSlug optionally names a direct child of a
 // top-level category. The service resolves the pair into CategorySlugs, the
 // list the store links.
-// Item positions are already assigned from the request order.
+// Value keeps its exact bytes; trimming would change markdown content.
 type CreatePostInput struct {
 	Slug     string
 	Title    string
@@ -112,20 +91,7 @@ type CreatePostInput struct {
 	CategorySlug   string
 	DerivativeSlug string
 	CategorySlugs  []string
-	Items          []ItemInput
-}
-
-// ItemInput is one item as the client sent it. Each payload field is a
-// pointer: nil means the key was absent, which is how the service spots a
-// field that does not belong to the item's kind. Only body_text keeps its
-// exact bytes; trimming it would change markdown and inline file content.
-type ItemInput struct {
-	Kind     Kind
-	Position int
-	BodyText *string
-	URL      *string
-	Filename *string
-	MIME     *string
+	Value          string
 }
 
 // ListFilter narrows the list query. Empty fields mean "no filter".

@@ -70,7 +70,7 @@ func seedPost(t *testing.T, mux *http.ServeMux, username, slug string) {
 		"slug": "`+slug+`",
 		"title": "Title `+slug+`",
 		"category": "coding",
-		"items": [{"kind": "markdown", "body_text": "# Intro"}]
+		"value": "# Intro"
 	}`, pair.AccessToken)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("create post status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())

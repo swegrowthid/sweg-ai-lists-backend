@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 )
 
 const (
-	maxSlugLen      = 100
-	maxTitleLen     = 200
-	maxNameLen      = 100
-	maxItems        = 20
-	maxBodyTextLen  = 64 << 10 // 64 KiB: inline .md files stay small on purpose
-	defaultFileMIME = "text/markdown"
+	maxSlugLen  = 100
+	maxTitleLen = 200
+	maxNameLen  = 100
+	maxValueLen = 64 << 10 // 64 KiB: inline .md files stay small on purpose
 
 	// maxGeneratedSlugLen caps a slug derived from a title, leaving room for
 	// the -2, -3, ... collision suffixes under maxSlugLen.
@@ -115,11 +112,10 @@ func (s *Service) Get(ctx context.Context, slug string) (Post, error) {
 	return s.store.FindBySlug(ctx, normalized)
 }
 
-// Create validates one post, assigns item positions from the request order,
-// and persists the post with its categories and items. An explicit slug keeps
-// the strict check: a conflict fails fast. An absent or blank slug is
-// generated from the title and retried with -2, -3, ... suffixes until the
-// write lands.
+// Create validates one post and persists it with its categories and its one
+// item. An explicit slug keeps the strict check: a conflict fails fast. An
+// absent or blank slug is generated from the title and retried with -2, -3,
+// ... suffixes until the write lands.
 func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, error) {
 	title := strings.TrimSpace(input.Title)
 	if title == "" || utf8.RuneCountInString(title) > maxTitleLen || hasNUL(title) {
@@ -128,11 +124,10 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 	if strings.TrimSpace(input.AuthorID) == "" {
 		return Post{}, ErrInvalidInput
 	}
-	categorySlugs, err := s.resolveCategoryChoice(ctx, input.CategorySlug, input.DerivativeSlug)
-	if err != nil {
-		return Post{}, err
+	if strings.TrimSpace(input.Value) == "" || len(input.Value) > maxValueLen || hasNUL(input.Value) {
+		return Post{}, ErrInvalidInput
 	}
-	items, err := normalizeItems(input.Items)
+	categorySlugs, err := s.resolveCategoryChoice(ctx, input.CategorySlug, input.DerivativeSlug)
 	if err != nil {
 		return Post{}, err
 	}
@@ -141,7 +136,7 @@ func (s *Service) Create(ctx context.Context, input CreatePostInput) (Post, erro
 		AuthorID:       input.AuthorID,
 		AuthorUsername: strings.TrimSpace(input.AuthorUsername),
 		CategorySlugs:  categorySlugs,
-		Items:          items,
+		Value:          input.Value,
 	}
 
 	if strings.TrimSpace(input.Slug) != "" {
@@ -253,84 +248,5 @@ func normalizeSlug(raw string) (string, error) {
 	return slug, nil
 }
 
-// normalizeItems validates every item and sets position from the array order,
-// so clients never send positions and gaps cannot appear.
-func normalizeItems(raw []ItemInput) ([]ItemInput, error) {
-	if len(raw) == 0 || len(raw) > maxItems {
-		return nil, ErrInvalidInput
-	}
-	items := make([]ItemInput, 0, len(raw))
-	for index, item := range raw {
-		normalized, err := normalizeItem(item)
-		if err != nil {
-			return nil, err
-		}
-		normalized.Position = index
-		items = append(items, normalized)
-	}
-	return items, nil
-}
-
-// normalizeItem enforces one payload shape per kind. A field that does not
-// belong to the kind is rejected as soon as the client sends it, even when it
-// is empty, so no data is dropped silently. body_text keeps its exact bytes.
-func normalizeItem(item ItemInput) (ItemInput, error) {
-	normalized := ItemInput{Kind: item.Kind}
-	switch item.Kind {
-	case KindMarkdown, KindText:
-		if !isFilled(item.BodyText) || item.URL != nil || item.Filename != nil || item.MIME != nil {
-			return ItemInput{}, ErrInvalidInput
-		}
-		normalized.BodyText = item.BodyText
-	case KindLink:
-		if !isFilled(item.URL) || item.BodyText != nil || item.Filename != nil || item.MIME != nil {
-			return ItemInput{}, ErrInvalidInput
-		}
-		link := strings.TrimSpace(*item.URL)
-		if !isAbsoluteHTTPURL(link) {
-			return ItemInput{}, ErrInvalidInput
-		}
-		normalized.URL = &link
-	case KindFile:
-		if !isFilled(item.BodyText) || !isFilled(item.Filename) || item.URL != nil {
-			return ItemInput{}, ErrInvalidInput
-		}
-		filename := strings.TrimSpace(*item.Filename)
-		mime := defaultFileMIME
-		if isFilled(item.MIME) {
-			mime = strings.TrimSpace(*item.MIME)
-		}
-		normalized.BodyText = item.BodyText
-		normalized.Filename = &filename
-		normalized.MIME = &mime
-	default:
-		return ItemInput{}, ErrInvalidInput
-	}
-
-	if body := normalized.BodyText; body != nil && len(*body) > maxBodyTextLen {
-		return ItemInput{}, ErrInvalidInput
-	}
-	for _, value := range []*string{normalized.BodyText, normalized.URL, normalized.Filename, normalized.MIME} {
-		if value != nil && hasNUL(*value) {
-			return ItemInput{}, ErrInvalidInput
-		}
-	}
-	return normalized, nil
-}
-
-// isFilled reports whether the client sent the key with non-blank text.
-func isFilled(value *string) bool {
-	return value != nil && strings.TrimSpace(*value) != ""
-}
-
 // hasNUL reports the one byte Postgres text columns cannot store.
 func hasNUL(value string) bool { return strings.IndexByte(value, 0) >= 0 }
-
-// isAbsoluteHTTPURL keeps links clickable and blocks javascript: style values.
-func isAbsoluteHTTPURL(raw string) bool {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
-}

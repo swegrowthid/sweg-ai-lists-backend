@@ -143,7 +143,7 @@ func scanCategoryRow(rows *sql.Rows) (Category, error) {
 }
 
 // Create implements Store. One transaction writes the post, its category
-// links, and its items, so a partial post never lands in the table.
+// links, and its one item, so a partial post never lands in the table.
 func (s *PostgresStore) Create(ctx context.Context, input CreatePostInput) (Post, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -158,7 +158,7 @@ func (s *PostgresStore) Create(ctx context.Context, input CreatePostInput) (Post
 	if err := linkCategories(ctx, tx, postID, input.CategorySlugs); err != nil {
 		return Post{}, err
 	}
-	if err := insertItems(ctx, tx, postID, input.Items); err != nil {
+	if err := insertItem(ctx, tx, postID, input.Value); err != nil {
 		return Post{}, err
 	}
 	created, err := findBySlug(ctx, tx, input.Slug)
@@ -267,25 +267,15 @@ func linkCategories(ctx context.Context, q querier, postID string, slugs []strin
 	return nil
 }
 
-// insertItems writes every item in the caller's transaction. A nil payload
-// pointer arrives as SQL NULL, so only the fields of the item's kind are set.
-func insertItems(ctx context.Context, q querier, postID string, items []ItemInput) error {
-	for _, item := range items {
-		_, err := q.ExecContext(ctx, `
-			INSERT INTO post_items (post_id, kind, position, body_text, url, filename, mime)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`,
-			postID,
-			item.Kind,
-			item.Position,
-			item.BodyText,
-			item.URL,
-			item.Filename,
-			item.MIME,
-		)
-		if err != nil {
-			return fmt.Errorf("post: insert item: %w", err)
-		}
+// insertItem writes the post's single item at position 0 in the caller's
+// transaction.
+func insertItem(ctx context.Context, q querier, postID, value string) error {
+	_, err := q.ExecContext(ctx, `
+		INSERT INTO post_items (post_id, position, value)
+		VALUES ($1, 0, $2)
+	`, postID, value)
+	if err != nil {
+		return fmt.Errorf("post: insert item: %w", err)
 	}
 	return nil
 }
@@ -328,7 +318,7 @@ func findBySlug(ctx context.Context, q querier, slug string) (Post, error) {
 // findItems reads one post's items in display order.
 func findItems(ctx context.Context, q querier, postID string) ([]Item, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT id, kind, position, body_text, url, filename, mime
+		SELECT id, position, value
 		FROM post_items
 		WHERE post_id = $1
 		ORDER BY position
@@ -343,12 +333,8 @@ func findItems(ctx context.Context, q querier, postID string) ([]Item, error) {
 		var item Item
 		if err := rows.Scan(
 			&item.ID,
-			&item.Kind,
 			&item.Position,
-			&item.BodyText,
-			&item.URL,
-			&item.Filename,
-			&item.MIME,
+			&item.Value,
 		); err != nil {
 			return nil, fmt.Errorf("post: find items scan: %w", err)
 		}
