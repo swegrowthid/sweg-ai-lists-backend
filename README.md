@@ -18,7 +18,7 @@ store_memory.go   adapter in-memory (test, dev)
 http.go           batas HTTP + mapping error ke status
 ```
 
-Paket domain: `user`, `auth`, `post`, `news`, `tools`, `dailyterm`, `wanted`. Paket `health` hanya service + http.
+Paket domain: `user`, `auth`, `post`, `news`, `tools`, `wanted`. Paket `health` hanya service + http.
 Paket platform: `config`, `db`, `httpserver`, `logger`, `docs`, `id`, `validator`, `mailer`.
 Wiring graf ada di `internal/app/app.go`. `main` hanya bangun resource lalu jalan.
 
@@ -30,13 +30,12 @@ mux -> auth.Handler -> auth.Magic -> user.Service + MagicStore + mailer.Mailer +
 mux -> post.Handler -> post.Service -> post.Store
 mux -> news.Handler -> news.Service -> news.Store
 mux -> tools.Handler -> tools.Service -> tools.Store + tools.VoteStore (memory tanpa pool, Postgres bila pool ada; migrasi 00011)
-mux -> dailyterm.Handler -> dailyterm.Service -> dailyterm.Store
 mux -> wanted.Handler -> wanted.Service -> wanted.Store + post.Service
 ```
 
 Nil pool jatuh ke memory store. Itu dipakai test dan `cmd/memserver`.
 Middleware: log, lalu CORS, lalu route. Tulis butuh Bearer token.
-Sync news, tools, dan daily term jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
+Sync news dan tools jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
 
 ## Struktur
 
@@ -50,7 +49,6 @@ internal/auth      login, refresh, logout, middleware JWT
 internal/post      categories + posts
 internal/news      AI Tools Digest dari blog zainfathoni.com
 internal/tools     katalog tools AI dari markdown tools-ai-swe-growth
-internal/dailyterm jurnal daily term dari markdown daily-term-SE-Growth
 internal/wanted    daftar wanted publik untuk post, tanpa login
 internal/health    liveness + readiness
 internal/platform  config, db, httpserver, logger, docs, id, validator
@@ -186,9 +184,6 @@ Hal lain yang menjaga email tetap di inbox:
 | `GET` | `/tools/{id}` | tidak (Bearer opsional untuk `voted`) | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. Bawa `votes` + `voted`. |
 | `POST` | `/tools/{id}/votes` | ya | Vote tool. Baru jawab 201, duplikat idempoten jawab 200. Body `VoteResult`. |
 | `DELETE` | `/tools/{id}/votes` | ya | Cabut vote sendiri. Selalu 200 + `VoteResult`. |
-| `GET` | `/daily-terms` | tidak | Satu bulan daily term. Filter `?month=YYYY-MM`. |
-| `GET` | `/daily-terms/months` | tidak | Bulan daily term yang tersedia: month_key, nama, file sumber, count. |
-| `GET` | `/daily-terms/{id}` | tidak | Detail satu term, id `2026-01-sieve-algorithm-or-sieve-of-eratosthenes`. |
 | `GET` | `/docs` | tidak | UI Scalar. Mati di prod kecuali `DOCS_UI=1`. |
 | `GET` | `/docs/openapi.yaml` | tidak | Spec. Selalu on. |
 
@@ -275,40 +270,6 @@ snapshot terakhir tetap tersaji dan run berikutnya mencoba lagi.
   ascending. Validasi snapshot: tool tak dikenal jawab 404 `tool not found`.
   Vote disimpan di tabel `tool_votes` (migrasi `00011`).
 
-## Daily Term
-
-`GET /daily-terms` menyajikan jurnal daily term dari repo
-`github.com/swegrowthid/daily-term-SE-Growth`. Repo itu menyimpan satu berkas
-markdown per bulan di bawah direktori tahun (`2026/jan-term.md`). Tidak ada tabel
-SQL: parser membaca judul H2 (juga H3, karena dua term sumber ada satu tingkat
-lebih dalam), memisahkan bagian `### Definition:` dan `### Example:`, lalu
-menyimpan hasilnya sebagai snapshot in-memory yang diganti atomik saat sync.
-
-Sync berjalan di dalam proses API, satu slot dengan news dan tools: sekali saat
-start, lalu tiap hari pukul 00:00 waktu server. Endpoint tidak pernah memanggil
-GitHub. Kalau sync gagal, snapshot terakhir tetap tersaji dan run berikutnya
-mencoba lagi.
-
-- `?month=YYYY-MM` memilih bulan. Bulan dengan format salah jawab 400
-  `invalid month`; bulan yang formatnya benar tapi tidak punya berkas jawab 404
-  `month not found`.
-- Tanpa `?month`, server memakai bulan server sekarang bila berkasnya ada, dan
-  kalau belum ada memakai bulan terbaru yang tersedia. `meta.month_key` di
-  response mengatakan bulan mana yang akhirnya disajikan.
-- `GET /daily-terms/months` menjawab daftar bulan terbaru dulu, jadi frontend
-  bisa membangun pemilih bulan tanpa menyalin tata letak repo sumber.
-- `definition` dan `example` adalah markdown mentah. Backend tidak merender
-  markdown; frontend yang merender. Label `### Definition:` dibuang dari teks.
-- `day` bukan tanggal kalender. Sumber menomori hari kerja tiap bulan, jadi
-  angkanya bisa melompati akhir pekan, bisa berulang, dan bisa mulai dari 28.
-- Daftar bulan ditemukan lewat listing git tree, bukan daftar tetap: upstream
-  memakai nama bulan yang tidak konsisten (`june` dan `july`, `sept` dan
-  `october`) dan tidak punya berkas untuk semua bulan, jadi bulan yang tidak
-  dikenal dilewati tanpa membatalkan sync.
-- Satu berkas gagal, atau listing tidak menemukan bulan sama sekali, membatalkan
-  seluruh sync sehingga tidak ada bulan yang tersaji separuh.
-- Sumber atau judul berubah = ubah `internal/dailyterm/parser.go`, bukan skema.
-
 ## Wanted
 
 `GET /wanted` menyajikan daftar wanted publik untuk post: satu baris per
@@ -372,8 +333,6 @@ Test pakai store in-memory. Tidak ada test menyentuh DB. `internal/app/app_test.
 
 Test `internal/news` memakai potongan halaman listing asli di `internal/news/testdata` dan server `httptest`: tanpa jaringan, tanpa DB.
 
-Test `internal/dailyterm` memakai potongan berkas bulan asli di `internal/dailyterm/testdata` dan server `httptest` untuk listing tree dan berkas bulan: tanpa jaringan, tanpa DB.
-
 ## Deploy
 
 Lihat `deploy/README.md`. Ringkas alur:
@@ -385,6 +344,6 @@ Lihat `deploy/README.md`. Ringkas alur:
 
 Migrasi gagal = API lama tetap jalan. Secrets GitHub: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` wajib. `DEPLOY_PORT`, `DEPLOY_PATH` opsional.
 
-Sync news, tools, dan daily term jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
+Sync news dan tools jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
 
 CI jalan di tiap push dan PR: vet, test, build linux. Job deploy hanya push `main`.
