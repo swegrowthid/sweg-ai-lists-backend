@@ -94,6 +94,20 @@ type CreatePostInput struct {
 	Value          string
 }
 
+// UpdatePostInput is the validated input for the update-post use case. Slug
+// names the stored post: it is the public handle and never changes, so a
+// rename is delete + create. CategorySlug and DerivativeSlug mirror the create
+// fields; the service resolves the pair into CategorySlugs, the list the store
+// links. Value keeps its exact bytes like on create.
+type UpdatePostInput struct {
+	Slug           string
+	Title          string
+	CategorySlug   string
+	DerivativeSlug string
+	CategorySlugs  []string
+	Value          string
+}
+
 // ListFilter narrows the list query. Empty fields mean "no filter".
 type ListFilter struct {
 	CategorySlug string

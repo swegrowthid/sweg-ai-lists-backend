@@ -277,6 +277,58 @@ paths:
                 type: string
         "500":
           description: Galat server
+    put:
+      summary: Ubah post - hanya pemilik
+      operationId: updatePost
+      tags: [posts]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Slug post. Slug tidak ikut berubah.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePostRequest"
+      responses:
+        "200":
+          description: Post berhasil diubah, jawab post tersimpan dengan satu item isi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          description: Request tidak valid atau category tidak dikenal
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          description: Post milik user lain
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: Post tidak ditemukan
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
     delete:
       summary: Hapus post - hanya pemilik
       operationId: deletePost
@@ -1101,6 +1153,30 @@ components:
           maxLength: 100
           description: Huruf kecil, angka, dan tanda hubung. Unik. Dibuat otomatis dari title bila tidak dikirim.
           example: setup-claude-code
+        title:
+          type: string
+          maxLength: 200
+          example: Setup Claude Code
+        category:
+          type: string
+          maxLength: 100
+          description: Slug category yang sudah ada, top-level atau turunan. Slug turunan otomatis ikut menyambung induknya.
+          example: coding
+        derivative:
+          type: string
+          maxLength: 100
+          description: "Slug turunan langsung, opsional. Harus anak dari category. Tidak perlu dikirim bila category sudah menyebut slug turunan."
+          example: claude-code
+        value:
+          type: string
+          maxLength: 65536
+          description: "Isi post. Wajib, tidak boleh blank setelah trim. Byte-exact, tanpa trim. Maksimal 64 KiB. Body maksimal 1 MiB."
+          example: "# Setup\n\nInstall the CLI."
+    UpdatePostRequest:
+      type: object
+      required: [title, category, value]
+      additionalProperties: false
+      properties:
         title:
           type: string
           maxLength: 200

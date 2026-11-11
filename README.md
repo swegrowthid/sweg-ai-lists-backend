@@ -175,6 +175,8 @@ Hal lain yang menjaga email tetap di inbox:
 | `GET` | `/posts` | tidak | Daftar post, tanpa items. Filter `?category=` dan `?q=`. |
 | `POST` | `/posts` | ya | Buat post. Langsung published. |
 | `GET` | `/posts/{slug}` | tidak | Detail post dengan satu item isi. |
+| `PUT` | `/posts/{slug}` | ya | Ubah post sendiri: title, category, derivative, value. Slug tidak berubah. |
+| `DELETE` | `/posts/{slug}` | ya | Hapus post sendiri. Jawab 204. |
 | `GET` | `/wanted` | tidak | Daftar post wanted, tanpa items, terbaru ditandai dulu. |
 | `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
 | `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
@@ -202,6 +204,7 @@ Seed bawaan: `coding`, `creative`, `presentation` (semua induk).
 - Satu post menyimpan tepat satu item di position 0 berisi `value`.
 - Byte NUL ditolak di semua field teks.
 - Slug post bentrok jawab 409. Category tak dikenal jawab 400 `unknown category`.
+- `PUT /posts/{slug}` mengganti title, category, derivative, dan value sekaligus dengan aturan validasi yang sama dengan create. Hanya pemilik; slug, author, dan `created_at` tidak berubah.
 
 Contoh minimal:
 

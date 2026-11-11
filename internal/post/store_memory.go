@@ -205,6 +205,41 @@ func (m *MemoryStore) FindBySlug(_ context.Context, slug string) (Post, error) {
 	return Post{}, ErrNotFound
 }
 
+// Update implements Store and mirrors the Postgres read-back: the title, the
+// category links, and the one item's value are replaced; the slug, the author,
+// and created_at stay put. A missing slug is ErrNotFound.
+func (m *MemoryStore) Update(_ context.Context, input UpdatePostInput) (Post, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for index, candidate := range m.posts {
+		if candidate.Slug != input.Slug {
+			continue
+		}
+		categories, err := m.categoriesBySlug(input.CategorySlugs)
+		if err != nil {
+			return Post{}, err
+		}
+		candidate.Title = input.Title
+		candidate.Categories = categories
+		// The item keeps its id like the Postgres upsert; a post that lost its
+		// item row gains a fresh one at position 0.
+		if len(candidate.Items) == 0 {
+			itemID, err := id.New()
+			if err != nil {
+				return Post{}, fmt.Errorf("post: generate item id: %w", err)
+			}
+			candidate.Items = []Item{{ID: itemID, Position: 0, Value: input.Value}}
+		} else {
+			candidate.Items[0].Value = input.Value
+		}
+		candidate.UpdatedAt = time.Now().UTC()
+		m.posts[index] = candidate
+		return clonePost(candidate, true), nil
+	}
+	return Post{}, ErrNotFound
+}
+
 // Delete implements Store by dropping the post from the slice. A missing slug
 // is ErrNotFound.
 func (m *MemoryStore) Delete(_ context.Context, slug string) error {
