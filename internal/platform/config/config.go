@@ -33,6 +33,11 @@ type Config struct {
 
 	MagicLinkTTL     time.Duration
 	MagicLinkBaseURL string
+
+	// The swegrowth.id Supabase project. Both set turns on POST /auth/supabase.
+	// The publishable key is public by design; it only names the project.
+	SupabaseURL            string
+	SupabasePublishableKey string
 }
 
 // Load builds Config from environment with safe defaults.
@@ -80,6 +85,9 @@ func Load() Config {
 		MailFrom:         strings.TrimSpace(os.Getenv("MAIL_FROM")),
 		MagicLinkTTL:     durationEnv("MAGIC_LINK_TTL", 15*time.Minute),
 		MagicLinkBaseURL: strings.TrimSpace(os.Getenv("MAGIC_LINK_BASE_URL")),
+
+		SupabaseURL:            strings.TrimSpace(os.Getenv("SUPABASE_URL")),
+		SupabasePublishableKey: strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY")),
 	}
 }
 
