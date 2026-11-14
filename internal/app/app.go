@@ -106,6 +106,11 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 
 	authHandler := auth.NewHandler(auth.NewService(userSvc, tokens, refreshStore), log)
 	authHandler.SetMagic(auth.NewMagic(userSvc, magicStore, tokens, refreshStore, mail, magicBaseURL, magicTTL))
+	if cfg.SupabaseURL != "" && cfg.SupabasePublishableKey != "" {
+		authHandler.SetSupabase(auth.NewSupabase(cfg.SupabaseURL, cfg.SupabasePublishableKey, userSvc, tokens, refreshStore))
+	} else {
+		log.Info("swegrowth sign-in off: set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to enable")
+	}
 	authHandler.RegisterRoutes(mux)
 	postSvc := post.NewService(postStore)
 	post.NewHandler(postSvc, log).RegisterRoutes(mux, requireAuth)

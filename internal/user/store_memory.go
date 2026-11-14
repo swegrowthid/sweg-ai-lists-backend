@@ -14,10 +14,12 @@ import (
 type MemoryStore struct {
 	mu    sync.RWMutex
 	users []User
+	// supabase maps a swegrowth.id account to the local user id.
+	supabase map[string]string
 }
 
 // NewMemoryStore builds an empty store.
-func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
+func NewMemoryStore() *MemoryStore { return &MemoryStore{supabase: map[string]string{}} }
 
 // Add inserts a user. Helper for seeds and tests, not an API yet.
 func (m *MemoryStore) Add(u User) {
@@ -36,6 +38,9 @@ func (m *MemoryStore) Create(_ context.Context, input CreateInput) (User, error)
 			return User{}, ErrConflict
 		}
 	}
+	if _, taken := m.supabase[input.SupabaseID]; input.SupabaseID != "" && taken {
+		return User{}, ErrConflict
+	}
 
 	now := time.Now().UTC()
 	uuid, err := id.New()
@@ -51,6 +56,9 @@ func (m *MemoryStore) Create(_ context.Context, input CreateInput) (User, error)
 		UpdatedAt:    now,
 	}
 	m.users = append(m.users, created)
+	if input.SupabaseID != "" {
+		m.supabase[input.SupabaseID] = created.ID
+	}
 	return created, nil
 }
 
@@ -113,4 +121,34 @@ func (m *MemoryStore) UpdatePasswordHash(_ context.Context, id, passwordHash str
 		}
 	}
 	return ErrNotFound
+}
+
+// FindBySupabaseID implements Store.
+func (m *MemoryStore) FindBySupabaseID(ctx context.Context, supabaseID string) (User, error) {
+	m.mu.RLock()
+	userID, ok := m.supabase[supabaseID]
+	m.mu.RUnlock()
+	if !ok {
+		return User{}, ErrNotFound
+	}
+	return m.FindByID(ctx, userID)
+}
+
+// LinkSupabaseID implements Store, mirroring the unique supabase_id column.
+func (m *MemoryStore) LinkSupabaseID(_ context.Context, id, supabaseID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if owner, taken := m.supabase[supabaseID]; taken {
+		if owner == id {
+			return nil
+		}
+		return ErrLinkedElsewhere
+	}
+	for linked, owner := range m.supabase {
+		if owner == id && linked != supabaseID {
+			return ErrLinkedElsewhere
+		}
+	}
+	m.supabase[supabaseID] = id
+	return nil
 }

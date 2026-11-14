@@ -2,6 +2,8 @@ package user
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,6 +25,10 @@ type Store interface {
 	FindByEmail(ctx context.Context, email string) (User, error)
 	FindByID(ctx context.Context, id string) (User, error)
 	UpdatePasswordHash(ctx context.Context, id, passwordHash string) error
+	FindBySupabaseID(ctx context.Context, supabaseID string) (User, error)
+	// LinkSupabaseID sets the user's swegrowth.id account when none is set.
+	// A different one already set returns ErrLinkedElsewhere.
+	LinkSupabaseID(ctx context.Context, id, supabaseID string) error
 }
 
 // dummyHash keeps logins with an unknown identifier on the bcrypt path,
@@ -128,4 +134,78 @@ func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput)
 		return err
 	}
 	return nil
+}
+
+// SignInSupabase returns the local user for a swegrowth.id account. In order:
+// the user already linked to it; else the user with the same email, now
+// linked, so their posts stay theirs; else a new user with no password.
+func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity) (User, error) {
+	identity.Email = strings.ToLower(strings.TrimSpace(identity.Email))
+	if identity.ID == "" || !strings.Contains(identity.Email, "@") {
+		return User{}, ErrInvalidInput
+	}
+
+	u, err := s.store.FindBySupabaseID(ctx, identity.ID)
+	if err == nil {
+		return u, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+
+	u, err = s.store.FindByEmail(ctx, identity.Email)
+	if err == nil {
+		if err := s.store.LinkSupabaseID(ctx, u.ID, identity.ID); err != nil {
+			return User{}, err
+		}
+		return u, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+
+	// A taken username is the only conflict left, so try the next candidate.
+	for _, username := range usernameCandidates(identity.Email) {
+		created, err := s.store.Create(ctx, CreateInput{
+			Username:   username,
+			Email:      identity.Email,
+			SupabaseID: identity.ID,
+		})
+		if errors.Is(err, ErrConflict) {
+			continue
+		}
+		return created, err
+	}
+	return User{}, ErrConflict
+}
+
+// usernameCandidates derives usernames from the email's local part:
+// "budi.s@x" gives budi.s, budi.s-2 … budi.s-9, then one random suffix.
+func usernameCandidates(email string) []string {
+	local, _, _ := strings.Cut(email, "@")
+	var b strings.Builder
+	for _, r := range strings.ToLower(local) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	base := strings.Trim(b.String(), ".-_")
+	if len(base) > 30 {
+		base = base[:30]
+	}
+	if len(base) < 3 {
+		base = "member"
+	}
+	out := []string{base}
+	for i := 2; i <= 9; i++ {
+		out = append(out, fmt.Sprintf("%s-%d", base, i))
+	}
+	suffix := make([]byte, 3)
+	if _, err := rand.Read(suffix); err == nil {
+		out = append(out, base+"-"+hex.EncodeToString(suffix))
+	}
+	return out
 }

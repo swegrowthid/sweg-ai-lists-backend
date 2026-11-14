@@ -26,6 +26,10 @@ var (
 	// ErrInvalidInput signals invalid registration data.
 	ErrInvalidInput = errors.New("user: invalid registration input")
 
+	// ErrLinkedElsewhere signals that the email's local account is already
+	// linked to a different swegrowth.id account.
+	ErrLinkedElsewhere = errors.New("user: email linked to another swegrowth account")
+
 	// ErrInvalidCredentials signals a failed login. One error for every cause:
 	// unknown identifier and wrong password stay indistinguishable.
 	ErrInvalidCredentials = errors.New("user: invalid credentials")
@@ -58,4 +62,13 @@ type CreateInput struct {
 	Username     string
 	Email        string
 	PasswordHash string
+	// SupabaseID links the new user to a swegrowth.id account. Empty for none.
+	SupabaseID string
+}
+
+// SupabaseIdentity is a swegrowth.id account as Supabase vouches for it.
+// The caller has already checked the email is confirmed.
+type SupabaseIdentity struct {
+	ID    string
+	Email string
 }

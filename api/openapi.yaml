@@ -881,6 +881,76 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /auth/supabase:
+    post:
+      summary: Tukar sesi swegrowth.id (Supabase) menjadi token pair
+      description: >-
+        Masuk dengan akun swegrowth.id. Body membawa access token Supabase
+        dari project swegrowth.id; server menanyakan pemiliknya ke
+        `GET /auth/v1/user` Supabase, jadi sesi yang dicabut ikut ditolak.
+        Urutan pencarian user lokal: yang sudah tertaut ke akun itu, lalu
+        yang emailnya sama (lalu ditautkan, post tetap miliknya), lalu user
+        baru tanpa password. Email harus sudah dikonfirmasi di Supabase.
+        Mengeluarkan TokenPair yang sama dengan /auth/login. Mati (503)
+        sampai `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` di-set.
+      operationId: exchangeSupabase
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [access_token]
+              properties:
+                access_token:
+                  type: string
+                  description: Access token sesi Supabase swegrowth.id
+      responses:
+        "200":
+          description: Login berhasil, access + refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "400":
+          description: Request tidak valid
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: "`invalid or expired swegrowth session`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "403":
+          description: "`confirm your email on swegrowth.id first`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "409":
+          description: "`this email is linked to another swegrowth account`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "502":
+          description: "`could not reach swegrowth sign-in`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "503":
+          description: "`swegrowth sign-in is not configured`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
 components:
   securitySchemes:
     bearerAuth:

@@ -14,9 +14,10 @@ const magicLinkSentMessage = "if the email is registered, a login link is on its
 
 // Handler maps Service results to HTTP. It owns status codes.
 type Handler struct {
-	svc   *Service
-	magic *Magic
-	log   *slog.Logger
+	svc      *Service
+	magic    *Magic
+	supabase *Supabase
+	log      *slog.Logger
 }
 
 // NewHandler wires the service. Nil log falls back to slog.Default.
@@ -35,6 +36,12 @@ func (h *Handler) SetMagic(magic *Magic) {
 	h.magic = magic
 }
 
+// SetSupabase turns on sign-in with a swegrowth.id account. Left unset,
+// POST /auth/supabase answers 503.
+func (h *Handler) SetSupabase(supabase *Supabase) {
+	h.supabase = supabase
+}
+
 // RegisterRoutes mounts auth endpoints on a stdlib mux. All public:
 // the refresh token in the body is the credential for refresh and logout.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -43,6 +50,42 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/logout", h.logout)
 	mux.HandleFunc("POST /auth/magic-link", h.requestMagicLink)
 	mux.HandleFunc("POST /auth/magic-link/verify", h.verifyMagicLink)
+	mux.HandleFunc("POST /auth/supabase", h.exchangeSupabase)
+}
+
+type supabaseExchangeRequest struct {
+	AccessToken string `json:"access_token"`
+}
+
+func (h *Handler) exchangeSupabase(w http.ResponseWriter, r *http.Request) {
+	if h.supabase == nil {
+		http.Error(w, "swegrowth sign-in is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var request supabaseExchangeRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	pair, err := h.supabase.Exchange(r.Context(), request.AccessToken)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSupabaseTokenInvalid):
+			http.Error(w, "invalid or expired swegrowth session", http.StatusUnauthorized)
+		case errors.Is(err, ErrSupabaseEmailUnverified):
+			http.Error(w, "confirm your email on swegrowth.id first", http.StatusForbidden)
+		case errors.Is(err, user.ErrLinkedElsewhere):
+			http.Error(w, "this email is linked to another swegrowth account", http.StatusConflict)
+		case errors.Is(err, ErrSupabaseUnavailable):
+			h.log.Warn("supabase exchange upstream failed", "error", err, "path", r.URL.Path)
+			http.Error(w, "could not reach swegrowth sign-in", http.StatusBadGateway)
+		default:
+			h.log.Error("supabase exchange failed", "error", err, "path", r.URL.Path)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, pair)
 }
 
 type loginRequest struct {
