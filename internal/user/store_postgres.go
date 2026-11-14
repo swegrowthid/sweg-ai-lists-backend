@@ -26,10 +26,10 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 func (s *PostgresStore) Create(ctx context.Context, input CreateInput) (User, error) {
 	var created User
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO users (username, email, password_hash)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (username, email, password_hash, supabase_id)
+		VALUES ($1, $2, $3, NULLIF($4, '')::uuid)
 		RETURNING id, username, email, password_hash, created_at, updated_at
-	`, input.Username, input.Email, input.PasswordHash).Scan(
+	`, input.Username, input.Email, input.PasswordHash, input.SupabaseID).Scan(
 		&created.ID,
 		&created.Username,
 		&created.Email,
@@ -158,6 +158,55 @@ func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, id, passwordHash
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// FindBySupabaseID implements Store.
+func (s *PostgresStore) FindBySupabaseID(ctx context.Context, supabaseID string) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE supabase_id = $1::uuid
+	`, supabaseID).Scan(
+		&u.ID,
+		&u.Username,
+		&u.Email,
+		&u.PasswordHash,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("user: find by supabase id: %w", err)
+	}
+	return u, nil
+}
+
+// LinkSupabaseID implements Store. Zero rows means another account is linked,
+// to this user or to this swegrowth.id account.
+func (s *PostgresStore) LinkSupabaseID(ctx context.Context, id, supabaseID string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE users
+		SET supabase_id = $2::uuid, updated_at = now()
+		WHERE id = $1 AND (supabase_id IS NULL OR supabase_id = $2::uuid)
+	`, id, supabaseID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrLinkedElsewhere
+		}
+		return fmt.Errorf("user: link supabase id: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("user: link supabase id rows: %w", err)
+	}
+	if affected == 0 {
+		return ErrLinkedElsewhere
 	}
 	return nil
 }

@@ -65,11 +65,16 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 }
 
 func (s *Service) issueAndSave(ctx context.Context, userID, username string) (Pair, error) {
-	pair, rec, err := s.tokens.Issue(userID, username)
+	return issuePair(ctx, s.tokens, s.refresh, userID, username)
+}
+
+// issuePair signs a pair and persists its refresh record. Every sign-in path ends here.
+func issuePair(ctx context.Context, tokens *Tokens, refresh RefreshStore, userID, username string) (Pair, error) {
+	pair, rec, err := tokens.Issue(userID, username)
 	if err != nil {
 		return Pair{}, err
 	}
-	if err := s.refresh.Save(ctx, rec); err != nil {
+	if err := refresh.Save(ctx, rec); err != nil {
 		return Pair{}, err
 	}
 	return pair, nil

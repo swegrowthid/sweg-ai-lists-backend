@@ -44,6 +44,9 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
    Set `DOCS_UI=1` bila UI Scalar di `/docs` mau hidup di prod.
    Set `CORS_ORIGINS=https://ai.swegrowth.id` agar frontend statis boleh
    memanggil API dari browser (tanpa ini register/login kena blok CORS).
+   Set `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` dari project Supabase
+   swegrowth.id agar tombol "Masuk dengan swegrowth.id" jalan; jalankan
+   migrasi `00013` dulu. Kosong = endpoint `/auth/supabase` menjawab 503.
 
 4. Pasang unit service:
 
