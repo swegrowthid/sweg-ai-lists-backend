@@ -74,6 +74,21 @@ func TestAppEndToEndWithMemoryStores(t *testing.T) {
 		t.Fatal("login response misses the access token")
 	}
 
+	res = doJSON(t, handler, http.MethodGet, "/users/me", "", pair.AccessToken)
+	if res.Code != http.StatusOK {
+		t.Fatalf("profile status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+	var profile struct {
+		ID        string   `json:"id"`
+		Providers []string `json:"providers"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &profile); err != nil {
+		t.Fatalf("decode profile response: %v", err)
+	}
+	if profile.ID == "" || profile.Providers == nil || len(profile.Providers) != 0 {
+		t.Fatalf("profile = %+v, want an id and empty providers", profile)
+	}
+
 	res = doJSON(t, handler, http.MethodPost, "/categories",
 		`{"slug":"coding-agent","name":"Coding Agent"}`, pair.AccessToken)
 	if res.Code != http.StatusCreated {

@@ -162,8 +162,9 @@ Hal lain yang menjaga email tetap di inbox:
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | tidak | Liveness. |
 | `GET` | `/readyz` | tidak | Readiness. 503 saat DB down. |
-| `POST` | `/users/register` | tidak | Buat user. Tanpa token keluar. |
-| `GET` | `/users` | ya | Daftar user. |
+| `POST` | `/users/register` | tidak | Buat user untuk non-anggota. Tanpa token keluar. |
+| `GET` | `/users` | ya | Daftar user beserta provider yang tertaut. |
+| `GET` | `/users/me` | ya | Profil user pemilik token beserta provider yang tertaut. |
 | `PUT` | `/users/password` | ya | Ganti password sendiri. Butuh `current_password` + `new_password`. Sukses cabut semua refresh token. |
 | `POST` | `/auth/login` | tidak | Identifier terima username atau email. |
 | `POST` | `/auth/magic-link` | tidak | Minta tautan + kode login via email. Selalu 200 anti enumerasi dengan `expires_in`; maks 5/jam per email. |
@@ -302,6 +303,29 @@ Magic link (`POST /auth/magic-link` lalu `POST /auth/magic-link/verify`) menyedi
 - Rate limit 5 permintaan per email per jam (`429 too many requests`).
 - Isi email: kode "1234 5678", tautan, umur berlaku, dan baris keamanan. Bagian teks dan HTML sama isinya. Tanpa gambar, tanpa pelacak, tanpa kata promosi. Lihat bagian Deliverability email.
 
+Masuk dengan akun swegrowth.id lewat `POST /auth/supabase`. Endpoint menerima access token Supabase, lalu menanyakan pemiliknya ke Supabase. Hasilnya ditautkan ke user lokal.
+
+### Akun tertaut (`user_identities`)
+
+Tabel `user_identities` menyimpan akun eksternal yang tertaut ke user lokal. Satu baris per akun. Satu akun hanya boleh tertaut ke satu user. Migrasi `00014` mengisi tabel ini dari `users.supabase_id`, lalu menghapus kolom itu.
+
+`GET /users/me` dan `GET /users` membawa penanda `providers`. Isinya `swegrowth` bila user punya akun swegrowth.id yang tertaut. Field ini selalu array, tidak pernah null. User lokal tanpa tautan menjawab `[]`. Id akun provider tidak pernah dikirim ke klien.
+
+Alur lokal dulu:
+
+1. Daftar lokal lewat `POST /users/register`.
+2. Masuk dengan swegrowth.id lewat `POST /auth/supabase` memakai email yang sama.
+3. Server menautkan akun swegrowth.id ke user lokal itu.
+4. Password dan login swegrowth.id sama-sama berlaku.
+
+Alur OAuth dulu:
+
+1. Masuk dengan swegrowth.id tanpa daftar lokal. Server membuat user lokal baru, atau memakai user yang sudah tertaut.
+2. Daftar ulang dengan email itu lewat `POST /users/register` ditolak 409 `this email is registered with swegrowth.id; sign in with swegrowth.id`.
+3. Untuk akun seperti ini, pakai login swegrowth.id.
+
+Daftar lokal hanya untuk non-anggota. Anggota swegrowth.id masuk lewat swegrowth.id. Duplikat username atau email lokal tetap jawab 409 `username or email already exists`.
+
 Refresh token bawa `jti`. Rotasi bersifat atomik. Token lama yang dipakai ulang membunuh seluruh keluarga token user itu. Logout cabut token itu.
 
 ## Migrasi
@@ -322,6 +346,8 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00010_magic_link_codes.sql` | Kolom kode login `magic_links`. |
 | `00011_create_tool_votes.sql` | Tabel `tool_votes`. PK `(tool_id, user_id)`, FK user cascade, CHECK format ID, index `user_id`. |
 | `00012_post_items_value.sql` | `post_items` jadi satu kolom `value`. Backfill dari `body_text`/`url`, kolom kind lama dihapus. |
+| `00013_users_supabase_id.sql` | Kolom `users.supabase_id` unik: akun swegrowth.id yang dipakai user lokal. |
+| `00014_user_identities.sql` | Tabel `user_identities` untuk akun eksternal yang tertaut. Isi dari `supabase_id`, lalu kolom itu dihapus. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 

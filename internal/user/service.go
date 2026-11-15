@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -19,16 +20,18 @@ const (
 
 // Store is the persistence port. Service depends on it, never on SQL.
 type Store interface {
-	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, input CreateInput) (User, error)
 	FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error)
 	FindByEmail(ctx context.Context, email string) (User, error)
 	FindByID(ctx context.Context, id string) (User, error)
 	UpdatePasswordHash(ctx context.Context, id, passwordHash string) error
-	FindBySupabaseID(ctx context.Context, supabaseID string) (User, error)
-	// LinkSupabaseID sets the user's swegrowth.id account when none is set.
-	// A different one already set returns ErrLinkedElsewhere.
-	LinkSupabaseID(ctx context.Context, id, supabaseID string) error
+	FindByIdentity(ctx context.Context, provider, providerUserID string) (User, error)
+	// LinkIdentity links an external account to the user. A different account
+	// for the same provider already linked returns ErrLinkedElsewhere.
+	LinkIdentity(ctx context.Context, userID, provider, providerUserID string) error
+	ListProfiles(ctx context.Context) ([]Profile, error)
+	FindProfileByID(ctx context.Context, id string) (Profile, error)
+	FindProfileByEmail(ctx context.Context, email string) (Profile, error)
 }
 
 // dummyHash keeps logins with an unknown identifier on the bcrypt path,
@@ -48,9 +51,18 @@ func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
-// List returns all users. Errors pass through untouched (E channel).
-func (s *Service) List(ctx context.Context) ([]User, error) {
-	return s.store.List(ctx)
+// ListProfiles returns all users with their linked providers.
+func (s *Service) ListProfiles(ctx context.Context) ([]Profile, error) {
+	return s.store.ListProfiles(ctx)
+}
+
+// Profile returns one user with the providers linked to it.
+func (s *Service) Profile(ctx context.Context, userID string) (Profile, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return Profile{}, ErrNotFound
+	}
+	return s.store.FindProfileByID(ctx, userID)
 }
 
 // FindByEmail looks up a user by email (case-insensitive).
@@ -70,6 +82,17 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (User, erro
 
 	if input.Username == "" || utf8.RuneCountInString(input.Username) < 3 || input.Email == "" || !strings.Contains(input.Email, "@") || input.Password == "" || len([]byte(input.Password)) > maxPasswordBytes {
 		return User{}, ErrInvalidInput
+	}
+
+	existing, err := s.store.FindProfileByEmail(ctx, input.Email)
+	if err == nil {
+		if slices.Contains(existing.Providers, ProviderSwegrowth) {
+			return User{}, ErrSwegrowthMember
+		}
+		return User{}, ErrConflict
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
@@ -145,7 +168,7 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 		return User{}, ErrInvalidInput
 	}
 
-	u, err := s.store.FindBySupabaseID(ctx, identity.ID)
+	u, err := s.store.FindByIdentity(ctx, ProviderSwegrowth, identity.ID)
 	if err == nil {
 		return u, nil
 	}
@@ -155,7 +178,7 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 
 	u, err = s.store.FindByEmail(ctx, identity.Email)
 	if err == nil {
-		if err := s.store.LinkSupabaseID(ctx, u.ID, identity.ID); err != nil {
+		if err := s.store.LinkIdentity(ctx, u.ID, ProviderSwegrowth, identity.ID); err != nil {
 			return User{}, err
 		}
 		return u, nil
@@ -167,16 +190,45 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 	// A taken username is the only conflict left, so try the next candidate.
 	for _, username := range usernameCandidates(identity.Email) {
 		created, err := s.store.Create(ctx, CreateInput{
-			Username:   username,
-			Email:      identity.Email,
-			SupabaseID: identity.ID,
+			Username: username,
+			Email:    identity.Email,
+			Identity: &Identity{Provider: ProviderSwegrowth, ProviderUserID: identity.ID},
 		})
-		if errors.Is(err, ErrConflict) {
-			continue
+		if !errors.Is(err, ErrConflict) && !errors.Is(err, ErrLinkedElsewhere) {
+			return created, err
 		}
-		return created, err
+		// A concurrent request may have won the insert. Resolve it instead of
+		// retrying usernames or returning a false conflict.
+		existing, findErr := s.resolveConcurrentSignIn(ctx, identity)
+		if findErr == nil {
+			return existing, nil
+		}
+		if !errors.Is(findErr, ErrNotFound) {
+			return User{}, findErr
+		}
+		if errors.Is(err, ErrLinkedElsewhere) {
+			return User{}, err
+		}
 	}
 	return User{}, ErrConflict
+}
+
+// resolveConcurrentSignIn returns the user another request created or linked
+// while this request was between its lookup and insert.
+func (s *Service) resolveConcurrentSignIn(ctx context.Context, identity SupabaseIdentity) (User, error) {
+	if u, err := s.store.FindByIdentity(ctx, ProviderSwegrowth, identity.ID); err == nil {
+		return u, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+	u, err := s.store.FindByEmail(ctx, identity.Email)
+	if err != nil {
+		return User{}, err
+	}
+	if err := s.store.LinkIdentity(ctx, u.ID, ProviderSwegrowth, identity.ID); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 // usernameCandidates derives usernames from the email's local part:

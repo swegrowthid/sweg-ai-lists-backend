@@ -124,6 +124,28 @@ func TestSupabaseLinksExistingAccountByEmail(t *testing.T) {
 	}
 }
 
+func TestSupabaseExchangeMarksTheProfile(t *testing.T) {
+	store := user.NewMemoryStore()
+	mux := newSupabaseMux(t, store, map[string]supabaseAccount{
+		"Bearer t1": confirmed(sidBudi, "budi@example.com"),
+	})
+
+	if res := exchange(t, mux, "t1"); res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", res.Code, res.Body.String())
+	}
+
+	profiles, err := store.ListProfiles(context.Background())
+	if err != nil {
+		t.Fatalf("ListProfiles() error = %v", err)
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("profiles = %d, want 1", len(profiles))
+	}
+	if len(profiles[0].Providers) != 1 || profiles[0].Providers[0] != user.ProviderSwegrowth {
+		t.Fatalf("providers = %v, want [swegrowth]", profiles[0].Providers)
+	}
+}
+
 func TestSupabaseRefusesEmailLinkedToAnotherAccount(t *testing.T) {
 	store := user.NewMemoryStore()
 	mux := newSupabaseMux(t, store, map[string]supabaseAccount{
