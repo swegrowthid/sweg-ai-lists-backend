@@ -156,6 +156,44 @@ func (m *MemoryStore) LinkIdentity(_ context.Context, userID, provider, provider
 	return nil
 }
 
+// UnlinkIdentity implements Store with the Postgres store's guard: the row
+// goes only while the user still holds a password or another identity.
+// A missing link is ErrNotFound, a refused unlink is ErrLastCredential.
+func (m *MemoryStore) UnlinkIdentity(_ context.Context, userID, provider string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, found := m.findUser(userID)
+	if !found {
+		return ErrNotFound
+	}
+	// UNIQUE (user_id, provider) holds at most one link per provider.
+	var accountID string
+	linked := false
+	for id, owner := range m.identities[provider] {
+		if owner == userID {
+			accountID, linked = id, true
+			break
+		}
+	}
+	if !linked {
+		return ErrNotFound
+	}
+	total := 0
+	for _, owners := range m.identities {
+		for _, owner := range owners {
+			if owner == userID {
+				total++
+			}
+		}
+	}
+	if u.PasswordHash == "" && total <= 1 {
+		return ErrLastCredential
+	}
+	delete(m.identities[provider], accountID)
+	return nil
+}
+
 // ListProfiles implements Store. Users keep the Postgres order:
 // created_at, then id.
 func (m *MemoryStore) ListProfiles(_ context.Context) ([]Profile, error) {

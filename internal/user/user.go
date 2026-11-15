@@ -47,6 +47,10 @@ var (
 	// ErrInvalidCredentials signals a failed login. One error for every cause:
 	// unknown identifier and wrong password stay indistinguishable.
 	ErrInvalidCredentials = errors.New("user: invalid credentials")
+
+	// ErrLastCredential signals that unlinking would remove the last way to
+	// sign in: the user has no password and no other identity left.
+	ErrLastCredential = errors.New("user: cannot unlink the last sign-in method")
 )
 
 // RegisterInput is the validated input for the registration use case.

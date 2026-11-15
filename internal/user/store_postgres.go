@@ -290,6 +290,48 @@ func (s *PostgresStore) LinkIdentity(ctx context.Context, userID, provider, prov
 	return ErrLinkedElsewhere
 }
 
+// UnlinkIdentity implements Store. One guarded statement removes the row
+// only while the user still holds a password or another identity, so two
+// racing unlinks can never strand the account. Zero affected rows are
+// ambiguous: the link was absent, or the guard rejected it. One extra read
+// tells them apart for the 404 vs 409 mapping.
+func (s *PostgresStore) UnlinkIdentity(ctx context.Context, userID, provider string) error {
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM user_identities
+		WHERE user_id = $1 AND provider = $2
+		AND (
+			EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND u.password_hash <> '')
+			OR (SELECT count(*) FROM user_identities x WHERE x.user_id = $1) >= 2
+		)
+	`, userID, provider)
+	if err != nil {
+		if invalidTextRepresentation(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("user: unlink identity: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("user: unlink identity rows: %w", err)
+	}
+	if affected == 1 {
+		return nil
+	}
+
+	var count int
+	err = s.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM user_identities
+		WHERE user_id = $1 AND provider = $2
+	`, userID, provider).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("user: unlink identity probe: %w", err)
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return ErrLastCredential
+}
+
 // ListProfiles implements Store. One query feeds the whole list; rows are
 // grouped by user in Go to avoid array scanning.
 func (s *PostgresStore) ListProfiles(ctx context.Context) ([]Profile, error) {

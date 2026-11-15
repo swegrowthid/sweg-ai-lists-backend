@@ -29,6 +29,11 @@ type Store interface {
 	// LinkIdentity links an external account to the user. A different account
 	// for the same provider already linked returns ErrLinkedElsewhere.
 	LinkIdentity(ctx context.Context, userID, provider, providerUserID string) error
+	// UnlinkIdentity removes the link between the user and the external
+	// account. It refuses to strand the account: when the user would be left
+	// without a password and without another identity it returns
+	// ErrLastCredential. A missing link returns ErrNotFound.
+	UnlinkIdentity(ctx context.Context, userID, provider string) error
 	ListProfiles(ctx context.Context) ([]Profile, error)
 	FindProfileByID(ctx context.Context, id string) (Profile, error)
 	FindProfileByEmail(ctx context.Context, email string) (Profile, error)
@@ -63,6 +68,18 @@ func (s *Service) Profile(ctx context.Context, userID string) (Profile, error) {
 		return Profile{}, ErrNotFound
 	}
 	return s.store.FindProfileByID(ctx, userID)
+}
+
+// UnlinkIdentity removes the user's link to an external account. The
+// guard lives in the store: unlinking is refused while it would leave the
+// user without a password and without another identity.
+func (s *Service) UnlinkIdentity(ctx context.Context, userID, provider string) error {
+	userID = strings.TrimSpace(userID)
+	provider = strings.TrimSpace(provider)
+	if userID == "" || provider == "" {
+		return ErrInvalidInput
+	}
+	return s.store.UnlinkIdentity(ctx, userID, provider)
 }
 
 // FindByEmail looks up a user by email (case-insensitive).
@@ -134,10 +151,12 @@ func (s *Service) Authenticate(ctx context.Context, input LoginInput) (User, err
 }
 
 // UpdatePassword verifies the current password and stores the new hash.
-// A wrong current password returns ErrInvalidCredentials; a missing user
-// returns ErrNotFound. Callers revoke sessions after a successful change.
+// A user without a password (external sign-in only) sets their first one:
+// an empty current_password is then the expected input. A wrong or missing
+// current password returns ErrInvalidCredentials; a missing user returns
+// ErrNotFound. Callers revoke sessions after a successful change.
 func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput) error {
-	if input.UserID == "" || input.CurrentPassword == "" || input.NewPassword == "" || len([]byte(input.NewPassword)) > maxPasswordBytes {
+	if input.UserID == "" || input.NewPassword == "" || len([]byte(input.NewPassword)) > maxPasswordBytes {
 		return ErrInvalidInput
 	}
 
@@ -145,8 +164,23 @@ func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput)
 	if err != nil {
 		return err
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.CurrentPassword)); err != nil {
-		return ErrInvalidCredentials
+
+	if u.PasswordHash == "" {
+		// First password. The access token already proved who the caller is;
+		// there is no older secret to verify. A non-empty current password
+		// cannot be right, so it is the same 401 as a wrong one.
+		if input.CurrentPassword != "" {
+			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(input.CurrentPassword))
+			return ErrInvalidCredentials
+		}
+	} else {
+		if input.CurrentPassword == "" {
+			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(input.NewPassword))
+			return ErrInvalidCredentials
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.CurrentPassword)); err != nil {
+			return ErrInvalidCredentials
+		}
 	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcryptCost)

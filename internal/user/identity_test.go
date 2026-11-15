@@ -465,3 +465,138 @@ func TestMeHandlerForMissingUserReturns401(t *testing.T) {
 		t.Fatalf("status = %d, want 401; body = %s", res.Code, res.Body.String())
 	}
 }
+
+func TestUnlinkKeepsThePasswordLoginWorking(t *testing.T) {
+	store := NewMemoryStore()
+	mux, svc := newIdentityMux(t, store)
+	ctx := context.Background()
+
+	created, err := svc.Register(ctx, RegisterInput{
+		Username: "budi",
+		Email:    "budi@example.com",
+		Password: "password",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := store.LinkIdentity(ctx, created.ID, ProviderSwegrowth, identityBudi); err != nil {
+		t.Fatalf("LinkIdentity() error = %v", err)
+	}
+
+	res := doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/"+ProviderSwegrowth, "", created.ID)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body = %s", res.Code, res.Body.String())
+	}
+
+	if _, err := store.FindByIdentity(ctx, ProviderSwegrowth, identityBudi); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("FindByIdentity() error = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.Authenticate(ctx, LoginInput{Identifier: "budi", Password: "password"}); err != nil {
+		t.Fatalf("Authenticate() error = %v, password login stopped after unlink", err)
+	}
+}
+
+func TestUnlinkLastIdentityWithoutPasswordIsRefused(t *testing.T) {
+	store := NewMemoryStore()
+	mux, svc := newIdentityMux(t, store)
+
+	member, err := svc.SignInSupabase(context.Background(), SupabaseIdentity{
+		ID:    identityBudi,
+		Email: "member@example.com",
+	})
+	if err != nil {
+		t.Fatalf("SignInSupabase() error = %v", err)
+	}
+
+	res := doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/"+ProviderSwegrowth, "", member.ID)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "cannot unlink the last sign-in method" {
+		t.Fatalf("message = %q, want the last-credential message", got)
+	}
+	if _, err := store.FindByIdentity(context.Background(), ProviderSwegrowth, identityBudi); err != nil {
+		t.Fatalf("FindByIdentity() error = %v, the refused unlink removed the link", err)
+	}
+}
+
+func TestUnlinkUnknownOrUnlinkedIdentityReturns404(t *testing.T) {
+	store := NewMemoryStore()
+	mux, svc := newIdentityMux(t, store)
+	ctx := context.Background()
+
+	created, err := svc.Register(ctx, RegisterInput{
+		Username: "budi",
+		Email:    "budi@example.com",
+		Password: "password",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	res := doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/"+ProviderSwegrowth, "", created.ID)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "identity not linked" {
+		t.Fatalf("message = %q, want the not-linked message", got)
+	}
+
+	if _, err := svc.SignInSupabase(ctx, SupabaseIdentity{ID: identityBudi, Email: "budi@example.com"}); err != nil {
+		t.Fatalf("SignInSupabase() error = %v", err)
+	}
+	res = doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/github", "", created.ID)
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for a provider the user never linked; body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestUnlinkOneOfTwoIdentitiesWithoutPassword(t *testing.T) {
+	store := NewMemoryStore()
+	mux, svc := newIdentityMux(t, store)
+	ctx := context.Background()
+
+	member, err := svc.SignInSupabase(ctx, SupabaseIdentity{
+		ID:    identityBudi,
+		Email: "member@example.com",
+	})
+	if err != nil {
+		t.Fatalf("SignInSupabase() error = %v", err)
+	}
+	if err := store.LinkIdentity(ctx, member.ID, "github", "gh-1"); err != nil {
+		t.Fatalf("LinkIdentity() error = %v", err)
+	}
+
+	res := doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/"+ProviderSwegrowth, "", member.ID)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body = %s", res.Code, res.Body.String())
+	}
+
+	profile, err := store.FindProfileByID(ctx, member.ID)
+	if err != nil {
+		t.Fatalf("FindProfileByID() error = %v", err)
+	}
+	if len(profile.Providers) != 1 || profile.Providers[0] != "github" {
+		t.Fatalf("providers = %v, want [github]", profile.Providers)
+	}
+}
+
+func TestUnlinkHandlerWithoutPrincipalReturns401(t *testing.T) {
+	store := NewMemoryStore()
+	mux, _ := newIdentityMux(t, store)
+
+	res := doJSONRequest(t, mux, http.MethodDelete, "/users/me/identities/"+ProviderSwegrowth, "", "")
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", res.Code, res.Body.String())
+	}
+	if got := strings.TrimSpace(res.Body.String()); got != "missing bearer token" {
+		t.Fatalf("message = %q, want missing bearer token", got)
+	}
+}
+
+func TestUnlinkServiceRejectsEmptyProvider(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	err := svc.UnlinkIdentity(context.Background(), "00000000-0000-0000-0000-000000000000", "  ")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UnlinkIdentity() error = %v, want ErrInvalidInput", err)
+	}
+}

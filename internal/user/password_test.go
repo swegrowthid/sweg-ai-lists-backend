@@ -74,13 +74,76 @@ func TestUpdatePasswordRejectsBadInput(t *testing.T) {
 
 	for _, input := range []UpdatePasswordInput{
 		{UserID: "", CurrentPassword: "old-password", NewPassword: "new-password"},
-		{UserID: created.ID, CurrentPassword: "", NewPassword: "new-password"},
 		{UserID: created.ID, CurrentPassword: "old-password", NewPassword: ""},
 		{UserID: created.ID, CurrentPassword: "old-password", NewPassword: strings.Repeat("a", maxPasswordBytes+1)},
 	} {
 		if err := svc.UpdatePassword(ctx, input); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("UpdatePassword(%+v) error = %v, want ErrInvalidInput", input, err)
 		}
+	}
+}
+
+func TestUpdatePasswordSetsFirstPassword(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	ctx := context.Background()
+	created, err := svc.SignInSupabase(ctx, SupabaseIdentity{
+		ID:    identityBudi,
+		Email: "budi@example.com",
+	})
+	if err != nil {
+		t.Fatalf("SignInSupabase() error = %v", err)
+	}
+
+	if err := svc.UpdatePassword(ctx, UpdatePasswordInput{
+		UserID:      created.ID,
+		NewPassword: "first-password",
+	}); err != nil {
+		t.Fatalf("UpdatePassword(first) error = %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, LoginInput{Identifier: "budi@example.com", Password: "first-password"}); err != nil {
+		t.Fatalf("Authenticate(new password) error = %v", err)
+	}
+
+	// Once a password exists, the current one is required again.
+	if err := svc.UpdatePassword(ctx, UpdatePasswordInput{
+		UserID:      created.ID,
+		NewPassword: "second-password",
+	}); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("UpdatePassword(second without current) error = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestUpdatePasswordWithoutStoredPasswordRejectsCurrent(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	ctx := context.Background()
+	created, err := svc.SignInSupabase(ctx, SupabaseIdentity{
+		ID:    identityBudi,
+		Email: "budi@example.com",
+	})
+	if err != nil {
+		t.Fatalf("SignInSupabase() error = %v", err)
+	}
+
+	err = svc.UpdatePassword(ctx, UpdatePasswordInput{
+		UserID:          created.ID,
+		CurrentPassword: "whatever",
+		NewPassword:     "new-password",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("UpdatePassword() error = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestUpdatePasswordWithStoredPasswordRejectsEmptyCurrent(t *testing.T) {
+	svc := NewService(NewMemoryStore())
+	created := registerForPasswordTest(t, svc)
+
+	err := svc.UpdatePassword(context.Background(), UpdatePasswordInput{
+		UserID:      created.ID,
+		NewPassword: "new-password",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("UpdatePassword() error = %v, want ErrInvalidCredentials", err)
 	}
 }
 

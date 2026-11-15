@@ -165,7 +165,8 @@ Hal lain yang menjaga email tetap di inbox:
 | `POST` | `/users/register` | tidak | Buat user untuk non-anggota. Tanpa token keluar. |
 | `GET` | `/users` | ya | Daftar user beserta provider yang tertaut. |
 | `GET` | `/users/me` | ya | Profil user pemilik token beserta provider yang tertaut. |
-| `PUT` | `/users/password` | ya | Ganti password sendiri. Butuh `current_password` + `new_password`. Sukses cabut semua refresh token. |
+| `DELETE` | `/users/me/identities/{provider}` | ya | Lepas satu tautan provider. Tautan terakhir ditolak 409 bila user belum punya password. |
+| `PUT` | `/users/password` | ya | Ganti atau buat password sendiri. Password sudah ada: wajib `current_password` + `new_password`. Belum ada password (akun dari `/auth/supabase`): cukup `new_password` untuk set pertama. Sukses cabut semua refresh token. |
 | `POST` | `/auth/login` | tidak | Identifier terima username atau email. |
 | `POST` | `/auth/magic-link` | tidak | Minta tautan + kode login via email. Selalu 200 anti enumerasi dengan `expires_in`; maks 5/jam per email. |
 | `POST` | `/auth/magic-link/verify` | tidak | Tukar token magic link ATAU email+kode satu kali pakai menjadi TokenPair. |
@@ -323,6 +324,9 @@ Alur OAuth dulu:
 1. Masuk dengan swegrowth.id tanpa daftar lokal. Server membuat user lokal baru, atau memakai user yang sudah tertaut.
 2. Daftar ulang dengan email itu lewat `POST /users/register` ditolak 409 `this email is registered with swegrowth.id; sign in with swegrowth.id`.
 3. Untuk akun seperti ini, pakai login swegrowth.id.
+4. Akun tanpa password bisa set password pertama lewat `PUT /users/password` tanpa `current_password`. Setelah itu password wajib seperti biasa.
+
+Tautan dilepas lewat `DELETE /users/me/identities/{provider}`. Password lokal tetap berlaku, dan login lewat provider yang sama berikutnya menautkan ulang user itu. Tautan terakhir ditolak 409 `cannot unlink the last sign-in method` bila user belum punya password, jadi akun tidak pernah kehilangan semua cara masuk.
 
 Daftar lokal hanya untuk non-anggota. Anggota swegrowth.id masuk lewat swegrowth.id. Duplikat username atau email lokal tetap jawab 409 `username or email already exists`.
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,18 @@ func newSupabaseMux(t *testing.T, store *user.MemoryStore, accounts map[string]s
 	tokens := NewTokens(testSecret, 24*time.Hour, 24*time.Hour)
 	refresh := NewMemoryRefreshStore()
 	mux := http.NewServeMux()
-	user.NewHandler(userSvc, nil).RegisterRoutes(mux, NewMiddleware(tokens).RequireAuth)
+	userHandler := user.NewHandler(userSvc, nil)
+	userHandler.SetAuth(
+		func(ctx context.Context) (string, bool) {
+			principal, ok := PrincipalFrom(ctx)
+			if !ok {
+				return "", false
+			}
+			return principal.UserID, true
+		},
+		refresh.RevokeAllForUser,
+	)
+	userHandler.RegisterRoutes(mux, NewMiddleware(tokens).RequireAuth)
 	h := NewHandler(NewService(userSvc, tokens, refresh), nil)
 	h.SetSupabase(NewSupabase(fakeSupabase(t, accounts).URL, testSupabaseKey, userSvc, tokens, refresh))
 	h.RegisterRoutes(mux)
@@ -202,5 +214,73 @@ func TestUsernameCandidatesStayUsable(t *testing.T) {
 	}
 	if a.Username != "member" || b.Username != "member-2" {
 		t.Fatalf("usernames = %q, %q; want member, member-2", a.Username, b.Username)
+	}
+}
+
+func TestSupabaseFirstSignInGainsAPasswordAndCanUnlink(t *testing.T) {
+	store := user.NewMemoryStore()
+	mux := newSupabaseMux(t, store, map[string]supabaseAccount{
+		"Bearer t1": confirmed(sidBudi, "budi@example.com"),
+		"Bearer t2": confirmed(sidOther, "newmember@example.com"),
+	})
+
+	// The first OAuth sign-in creates a local user without a password.
+	first := exchange(t, mux, "t1")
+	if first.Code != http.StatusOK {
+		t.Fatalf("exchange status = %d, want 200; body = %s", first.Code, first.Body.String())
+	}
+	var pair Pair
+	if err := json.Unmarshal(first.Body.Bytes(), &pair); err != nil {
+		t.Fatalf("decode pair: %v", err)
+	}
+	created := subjectOf(t, first)
+
+	profile := doJSON(t, mux, http.MethodGet, "/users/me", "", pair.AccessToken)
+	if profile.Code != http.StatusOK {
+		t.Fatalf("profile status = %d, want 200; body = %s", profile.Code, profile.Body.String())
+	}
+	if !strings.Contains(profile.Body.String(), `"providers":["swegrowth"]`) {
+		t.Fatalf("profile missing providers: %s", profile.Body.String())
+	}
+
+	// The first password needs no current one.
+	set := doJSON(t, mux, http.MethodPut, "/users/password", `{"new_password":"first-password"}`, pair.AccessToken)
+	if set.Code != http.StatusNoContent {
+		t.Fatalf("set password status = %d, want 204; body = %s", set.Code, set.Body.String())
+	}
+	if login(t, mux, "budi@example.com", "first-password").AccessToken == "" {
+		t.Fatal("password login did not work after the first set")
+	}
+
+	// With a password in place, unlinking keeps the account reachable.
+	unlink := doJSON(t, mux, http.MethodDelete, "/users/me/identities/swegrowth", "", pair.AccessToken)
+	if unlink.Code != http.StatusNoContent {
+		t.Fatalf("unlink status = %d, want 204; body = %s", unlink.Code, unlink.Body.String())
+	}
+
+	// Signing in again links the same user back.
+	again := exchange(t, mux, "t1")
+	if again.Code != http.StatusOK {
+		t.Fatalf("re-exchange status = %d, want 200; body = %s", again.Code, again.Body.String())
+	}
+	if relinked := subjectOf(t, again); relinked.Subject != created.Subject {
+		t.Fatalf("re-exchange user = %s, want the same %s", relinked.Subject, created.Subject)
+	}
+	if login(t, mux, "budi@example.com", "first-password").AccessToken == "" {
+		t.Fatal("password login stopped after re-linking")
+	}
+
+	// A fresh passwordless account still cannot drop its only credential.
+	second := exchange(t, mux, "t2")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second exchange status = %d, want 200", second.Code)
+	}
+	var secondPair Pair
+	if err := json.Unmarshal(second.Body.Bytes(), &secondPair); err != nil {
+		t.Fatalf("decode second pair: %v", err)
+	}
+	res := doJSON(t, mux, http.MethodDelete, "/users/me/identities/swegrowth", "", secondPair.AccessToken)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("second unlink status = %d, want 409; body = %s", res.Code, res.Body.String())
 	}
 }

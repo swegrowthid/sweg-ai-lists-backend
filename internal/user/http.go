@@ -41,6 +41,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) 
 	}
 	mux.Handle("GET /users", protect(http.HandlerFunc(h.list)))
 	mux.Handle("GET /users/me", protect(http.HandlerFunc(h.me)))
+	mux.Handle("DELETE /users/me/identities/{provider}", protect(http.HandlerFunc(h.unlink)))
 	mux.Handle("PUT /users/password", protect(http.HandlerFunc(h.changePassword)))
 	mux.HandleFunc("POST /users/register", h.register)
 }
@@ -147,6 +148,38 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(profile)
+}
+
+// unlink removes one external identity link from the caller's profile.
+// The user ID comes from the verified access token, never from the path.
+// Unlinking the last way to sign in answers 409, a link that does not
+// exist answers 404.
+func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
+	if h.principal == nil {
+		h.log.Error("user identity unlink without principal resolver", "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	userID, ok := h.principal(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+
+	err := h.svc.UnlinkIdentity(r.Context(), userID, r.PathValue("provider"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidInput):
+		http.Error(w, "invalid provider", http.StatusBadRequest)
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "identity not linked", http.StatusNotFound)
+	case errors.Is(err, ErrLastCredential):
+		http.Error(w, "cannot unlink the last sign-in method", http.StatusConflict)
+	default:
+		h.log.Error("user identity unlink failed", "error", err, "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 type changePasswordRequest struct {
