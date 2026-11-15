@@ -40,6 +40,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, protect func(http.Handler) 
 		protect = func(next http.Handler) http.Handler { return next }
 	}
 	mux.Handle("GET /users", protect(http.HandlerFunc(h.list)))
+	mux.Handle("GET /users/me", protect(http.HandlerFunc(h.me)))
+	mux.Handle("DELETE /users/me/identities/{provider}", protect(http.HandlerFunc(h.unlink)))
 	mux.Handle("PUT /users/password", protect(http.HandlerFunc(h.changePassword)))
 	mux.HandleFunc("POST /users/register", h.register)
 }
@@ -81,6 +83,8 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrInvalidInput):
 			http.Error(w, "invalid username, email, or password", http.StatusBadRequest)
+		case errors.Is(err, ErrSwegrowthMember):
+			http.Error(w, "this email is registered with swegrowth.id; sign in with swegrowth.id", http.StatusConflict)
 		case errors.Is(err, ErrConflict):
 			http.Error(w, "username or email already exists", http.StatusConflict)
 		default:
@@ -96,17 +100,86 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	users, err := h.svc.List(r.Context())
+	profiles, err := h.svc.ListProfiles(r.Context())
 	if err != nil {
 		h.log.Warn("users list failed", "error", err, "path", r.URL.Path)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if users == nil {
-		users = []User{}
+	if profiles == nil {
+		profiles = []Profile{}
+	}
+	for i := range profiles {
+		if profiles[i].Providers == nil {
+			profiles[i].Providers = []string{}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(users)
+	_ = json.NewEncoder(w).Encode(profiles)
+}
+
+// me returns the caller's own profile. The user ID comes from the verified
+// access token, never from the path.
+func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+	if h.principal == nil {
+		h.log.Error("user profile without principal resolver", "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	userID, ok := h.principal(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+
+	profile, err := h.svc.Profile(r.Context(), userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			http.Error(w, "user not found", http.StatusUnauthorized)
+		default:
+			h.log.Error("user profile failed", "error", err, "path", r.URL.Path)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	if profile.Providers == nil {
+		profile.Providers = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(profile)
+}
+
+// unlink removes one external identity link from the caller's profile.
+// The user ID comes from the verified access token, never from the path.
+// Unlinking the last way to sign in answers 409, a link that does not
+// exist answers 404.
+func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
+	if h.principal == nil {
+		h.log.Error("user identity unlink without principal resolver", "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	userID, ok := h.principal(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		return
+	}
+
+	err := h.svc.UnlinkIdentity(r.Context(), userID, r.PathValue("provider"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrInvalidInput):
+		http.Error(w, "invalid provider", http.StatusBadRequest)
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, "identity not linked", http.StatusNotFound)
+	case errors.Is(err, ErrLastCredential):
+		http.Error(w, "cannot unlink the last sign-in method", http.StatusConflict)
+	default:
+		h.log.Error("user identity unlink failed", "error", err, "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 type changePasswordRequest struct {

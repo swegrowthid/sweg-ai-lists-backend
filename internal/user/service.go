@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -19,16 +20,23 @@ const (
 
 // Store is the persistence port. Service depends on it, never on SQL.
 type Store interface {
-	List(ctx context.Context) ([]User, error)
 	Create(ctx context.Context, input CreateInput) (User, error)
 	FindByUsernameOrEmail(ctx context.Context, identifier string) (User, error)
 	FindByEmail(ctx context.Context, email string) (User, error)
 	FindByID(ctx context.Context, id string) (User, error)
 	UpdatePasswordHash(ctx context.Context, id, passwordHash string) error
-	FindBySupabaseID(ctx context.Context, supabaseID string) (User, error)
-	// LinkSupabaseID sets the user's swegrowth.id account when none is set.
-	// A different one already set returns ErrLinkedElsewhere.
-	LinkSupabaseID(ctx context.Context, id, supabaseID string) error
+	FindByIdentity(ctx context.Context, provider, providerUserID string) (User, error)
+	// LinkIdentity links an external account to the user. A different account
+	// for the same provider already linked returns ErrLinkedElsewhere.
+	LinkIdentity(ctx context.Context, userID, provider, providerUserID string) error
+	// UnlinkIdentity removes the link between the user and the external
+	// account. It refuses to strand the account: when the user would be left
+	// without a password and without another identity it returns
+	// ErrLastCredential. A missing link returns ErrNotFound.
+	UnlinkIdentity(ctx context.Context, userID, provider string) error
+	ListProfiles(ctx context.Context) ([]Profile, error)
+	FindProfileByID(ctx context.Context, id string) (Profile, error)
+	FindProfileByEmail(ctx context.Context, email string) (Profile, error)
 }
 
 // dummyHash keeps logins with an unknown identifier on the bcrypt path,
@@ -48,9 +56,30 @@ func NewService(store Store) *Service {
 	return &Service{store: store}
 }
 
-// List returns all users. Errors pass through untouched (E channel).
-func (s *Service) List(ctx context.Context) ([]User, error) {
-	return s.store.List(ctx)
+// ListProfiles returns all users with their linked providers.
+func (s *Service) ListProfiles(ctx context.Context) ([]Profile, error) {
+	return s.store.ListProfiles(ctx)
+}
+
+// Profile returns one user with the providers linked to it.
+func (s *Service) Profile(ctx context.Context, userID string) (Profile, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return Profile{}, ErrNotFound
+	}
+	return s.store.FindProfileByID(ctx, userID)
+}
+
+// UnlinkIdentity removes the user's link to an external account. The
+// guard lives in the store: unlinking is refused while it would leave the
+// user without a password and without another identity.
+func (s *Service) UnlinkIdentity(ctx context.Context, userID, provider string) error {
+	userID = strings.TrimSpace(userID)
+	provider = strings.TrimSpace(provider)
+	if userID == "" || provider == "" {
+		return ErrInvalidInput
+	}
+	return s.store.UnlinkIdentity(ctx, userID, provider)
 }
 
 // FindByEmail looks up a user by email (case-insensitive).
@@ -70,6 +99,17 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (User, erro
 
 	if input.Username == "" || utf8.RuneCountInString(input.Username) < 3 || input.Email == "" || !strings.Contains(input.Email, "@") || input.Password == "" || len([]byte(input.Password)) > maxPasswordBytes {
 		return User{}, ErrInvalidInput
+	}
+
+	existing, err := s.store.FindProfileByEmail(ctx, input.Email)
+	if err == nil {
+		if slices.Contains(existing.Providers, ProviderSwegrowth) {
+			return User{}, ErrSwegrowthMember
+		}
+		return User{}, ErrConflict
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
@@ -111,10 +151,12 @@ func (s *Service) Authenticate(ctx context.Context, input LoginInput) (User, err
 }
 
 // UpdatePassword verifies the current password and stores the new hash.
-// A wrong current password returns ErrInvalidCredentials; a missing user
-// returns ErrNotFound. Callers revoke sessions after a successful change.
+// A user without a password (external sign-in only) sets their first one:
+// an empty current_password is then the expected input. A wrong or missing
+// current password returns ErrInvalidCredentials; a missing user returns
+// ErrNotFound. Callers revoke sessions after a successful change.
 func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput) error {
-	if input.UserID == "" || input.CurrentPassword == "" || input.NewPassword == "" || len([]byte(input.NewPassword)) > maxPasswordBytes {
+	if input.UserID == "" || input.NewPassword == "" || len([]byte(input.NewPassword)) > maxPasswordBytes {
 		return ErrInvalidInput
 	}
 
@@ -122,8 +164,23 @@ func (s *Service) UpdatePassword(ctx context.Context, input UpdatePasswordInput)
 	if err != nil {
 		return err
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.CurrentPassword)); err != nil {
-		return ErrInvalidCredentials
+
+	if u.PasswordHash == "" {
+		// First password. The access token already proved who the caller is;
+		// there is no older secret to verify. A non-empty current password
+		// cannot be right, so it is the same 401 as a wrong one.
+		if input.CurrentPassword != "" {
+			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(input.CurrentPassword))
+			return ErrInvalidCredentials
+		}
+	} else {
+		if input.CurrentPassword == "" {
+			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(input.NewPassword))
+			return ErrInvalidCredentials
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(input.CurrentPassword)); err != nil {
+			return ErrInvalidCredentials
+		}
 	}
 
 	newHash, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcryptCost)
@@ -145,7 +202,7 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 		return User{}, ErrInvalidInput
 	}
 
-	u, err := s.store.FindBySupabaseID(ctx, identity.ID)
+	u, err := s.store.FindByIdentity(ctx, ProviderSwegrowth, identity.ID)
 	if err == nil {
 		return u, nil
 	}
@@ -155,7 +212,7 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 
 	u, err = s.store.FindByEmail(ctx, identity.Email)
 	if err == nil {
-		if err := s.store.LinkSupabaseID(ctx, u.ID, identity.ID); err != nil {
+		if err := s.store.LinkIdentity(ctx, u.ID, ProviderSwegrowth, identity.ID); err != nil {
 			return User{}, err
 		}
 		return u, nil
@@ -167,16 +224,45 @@ func (s *Service) SignInSupabase(ctx context.Context, identity SupabaseIdentity)
 	// A taken username is the only conflict left, so try the next candidate.
 	for _, username := range usernameCandidates(identity.Email) {
 		created, err := s.store.Create(ctx, CreateInput{
-			Username:   username,
-			Email:      identity.Email,
-			SupabaseID: identity.ID,
+			Username: username,
+			Email:    identity.Email,
+			Identity: &Identity{Provider: ProviderSwegrowth, ProviderUserID: identity.ID},
 		})
-		if errors.Is(err, ErrConflict) {
-			continue
+		if !errors.Is(err, ErrConflict) && !errors.Is(err, ErrLinkedElsewhere) {
+			return created, err
 		}
-		return created, err
+		// A concurrent request may have won the insert. Resolve it instead of
+		// retrying usernames or returning a false conflict.
+		existing, findErr := s.resolveConcurrentSignIn(ctx, identity)
+		if findErr == nil {
+			return existing, nil
+		}
+		if !errors.Is(findErr, ErrNotFound) {
+			return User{}, findErr
+		}
+		if errors.Is(err, ErrLinkedElsewhere) {
+			return User{}, err
+		}
 	}
 	return User{}, ErrConflict
+}
+
+// resolveConcurrentSignIn returns the user another request created or linked
+// while this request was between its lookup and insert.
+func (s *Service) resolveConcurrentSignIn(ctx context.Context, identity SupabaseIdentity) (User, error) {
+	if u, err := s.store.FindByIdentity(ctx, ProviderSwegrowth, identity.ID); err == nil {
+		return u, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+	u, err := s.store.FindByEmail(ctx, identity.Email)
+	if err != nil {
+		return User{}, err
+	}
+	if err := s.store.LinkIdentity(ctx, u.ID, ProviderSwegrowth, identity.ID); err != nil {
+		return User{}, err
+	}
+	return u, nil
 }
 
 // usernameCandidates derives usernames from the email's local part:

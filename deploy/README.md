@@ -46,7 +46,8 @@ Asumsi: Ubuntu/Debian dengan systemd. Pastikan `rsync` dan `curl` terpasang.
    memanggil API dari browser (tanpa ini register/login kena blok CORS).
    Set `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` dari project Supabase
    swegrowth.id agar tombol "Masuk dengan swegrowth.id" jalan; jalankan
-   migrasi `00013` dulu. Kosong = endpoint `/auth/supabase` menjawab 503.
+   `make migrate-up` (00013 dan 00014) dulu. Kosong = endpoint
+   `/auth/supabase` menjawab 503.
 
 4. Pasang unit service:
 
@@ -97,6 +98,9 @@ protection rules di environment itu bila perlu tinjauan manual.
 ## Catatan
 
 - Rollback: jalankan ulang workflow dari commit lama, atau `git revert`.
+  Biner lama masih membaca `users.supabase_id`. Sebelum memasang biner lama,
+  jalankan `goose down` untuk 00014 dulu. Tanpa itu login swegrowth.id dan
+  register menjawab 500.
 - `APP_VERSION` terisi otomatis dari git SHA via `release.env`.
 - Bila `APP_ADDR` bukan port 8080, sesuaikan langkah `Health check`
   di `.github/workflows/ci.yml`.

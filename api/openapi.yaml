@@ -58,7 +58,12 @@ paths:
               schema:
                 type: string
         "409":
-          description: Username atau email sudah terdaftar
+          description: >-
+            Ada dua kasus. Pertama, username atau email lokal sudah terdaftar,
+            jawab `username or email already exists`. Kedua, email itu milik
+            anggota swegrowth.id, jawab `this email is registered with
+            swegrowth.id; sign in with swegrowth.id`. Daftar lokal hanya untuk
+            non-anggota; anggota masuk lewat /auth/supabase.
           content:
             text/plain:
               schema:
@@ -74,13 +79,13 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Daftar user tanpa password_hash
+          description: Daftar user tanpa password_hash, masing-masing dengan daftar provider yang tertaut
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/User"
+                  $ref: "#/components/schemas/UserProfile"
         "401":
           description: Token hilang, tidak valid, atau kadaluarsa
           content:
@@ -89,9 +94,37 @@ paths:
                 type: string
         "500":
           description: Galat server
+  /users/me:
+    get:
+      summary: Profil user yang meminta
+      operationId: getCurrentUser
+      tags: [users]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Profil user pemilik token, termasuk daftar provider yang tertaut
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa; atau user dari token sudah tidak ada
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
   /users/password:
     put:
-      summary: Ganti password milik sendiri - cabut semua sesi refresh
+      summary: Ganti atau buat password milik sendiri - cabut semua sesi refresh
+      description: >-
+        Password sudah ada: wajib `current_password` yang benar. Belum ada
+        password (akun dibuat lewat /auth/supabase): kirim tanpa
+        `current_password` untuk set password pertama; `current_password`
+        yang terisi tetap ditolak 401. Sukses selalu mencabut semua refresh
+        token user.
       operationId: changePassword
       tags: [users]
       security:
@@ -104,7 +137,7 @@ paths:
               $ref: "#/components/schemas/ChangePasswordRequest"
       responses:
         "204":
-          description: Password diganti, semua refresh token user dicabut
+          description: Password disimpan, semua refresh token user dicabut
         "400":
           description: Request tidak valid atau password baru tidak valid
           content:
@@ -112,7 +145,59 @@ paths:
               schema:
                 type: string
         "401":
-          description: Token hilang, tidak valid, atau kadaluarsa; atau password lama salah
+          description: >-
+            Token hilang, tidak valid, atau kadaluarsa; atau
+            `current_password` salah, kosong saat password sudah ada, atau
+            terisi saat belum ada password
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /users/me/identities/{provider}:
+    delete:
+      summary: Lepas tautan akun eksternal milik sendiri
+      description: >-
+        Menghapus satu tautan provider dari profil pemilik token. Tautan
+        terakhir tidak boleh dilepas: bila user tidak punya password dan
+        tidak punya tautan lain, jawab 409 `cannot unlink the last sign-in
+        method`. Setelah lepas, password lokal tetap berlaku, dan login
+        lewat provider yang sama berikutnya menautkan ulang user itu.
+      operationId: unlinkIdentity
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: Penanda provider, misal `swegrowth`
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Tautan dilepas
+        "400":
+          description: "`invalid provider`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Token hilang, tidak valid, atau kadaluarsa
+          content:
+            text/plain:
+              schema:
+                type: string
+        "404":
+          description: "`identity not linked`"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "409":
+          description: "`cannot unlink the last sign-in method`"
           content:
             text/plain:
               schema:
@@ -1083,7 +1168,7 @@ components:
           example: secret-password
     ChangePasswordRequest:
       type: object
-      required: [current_password, new_password]
+      required: [new_password]
       additionalProperties: false
       properties:
         current_password:
@@ -1091,6 +1176,7 @@ components:
           format: password
           writeOnly: true
           example: secret-password
+          description: Wajib saat password sudah ada. Biarkan absen untuk set password pertama di akun yang dibuat lewat /auth/supabase.
         new_password:
           type: string
           format: password
@@ -1119,6 +1205,28 @@ components:
         updated_at:
           type: string
           format: date-time
+    UserProfile:
+      description: >-
+        User plus akun eksternal yang tertaut. Field `providers` memuat satu
+        penanda per provider yang tertaut. Isinya `swegrowth` bila user punya
+        akun swegrowth.id yang tertaut. Nilainya selalu array, tidak pernah
+        null; user lokal tanpa tautan menjawab []. Id akun provider tidak
+        pernah diekspos.
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [providers]
+          properties:
+            providers:
+              type: array
+              description: >-
+                Penanda provider yang tertaut ke user ini. `swegrowth` berarti
+                user punya akun swegrowth.id yang tertaut. Selalu array, tidak
+                pernah null; user lokal tanpa tautan menjawab [].
+              items:
+                type: string
+                description: Nama provider, saat ini `swegrowth`.
+              example: ["swegrowth"]
     Category:
       type: object
       required: [id, slug, name, created_at, updated_at]

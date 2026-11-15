@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// ProviderSwegrowth is the external identity provider for swegrowth.id.
+const ProviderSwegrowth = "swegrowth"
+
 // User is the domain entity. Keep it small; grow only on demand.
 // PasswordHash never leaves the server (json:"-").
 type User struct {
@@ -14,6 +17,13 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Profile is a user plus the external providers linked to it.
+// Providers is an empty slice, never nil, on every profile read.
+type Profile struct {
+	User
+	Providers []string `json:"providers"`
 }
 
 var (
@@ -30,9 +40,17 @@ var (
 	// linked to a different swegrowth.id account.
 	ErrLinkedElsewhere = errors.New("user: email linked to another swegrowth account")
 
+	// ErrSwegrowthMember signals that the email already belongs to a
+	// swegrowth.id member, so local registration is closed.
+	ErrSwegrowthMember = errors.New("user: email registered with swegrowth")
+
 	// ErrInvalidCredentials signals a failed login. One error for every cause:
 	// unknown identifier and wrong password stay indistinguishable.
 	ErrInvalidCredentials = errors.New("user: invalid credentials")
+
+	// ErrLastCredential signals that unlinking would remove the last way to
+	// sign in: the user has no password and no other identity left.
+	ErrLastCredential = errors.New("user: cannot unlink the last sign-in method")
 )
 
 // RegisterInput is the validated input for the registration use case.
@@ -57,13 +75,19 @@ type UpdatePasswordInput struct {
 	NewPassword     string
 }
 
+// Identity is an external account linked to a local user.
+type Identity struct {
+	Provider       string
+	ProviderUserID string
+}
+
 // CreateInput contains the trusted values persisted for a new user.
 type CreateInput struct {
 	Username     string
 	Email        string
 	PasswordHash string
-	// SupabaseID links the new user to a swegrowth.id account. Empty for none.
-	SupabaseID string
+	// Identity links the new user to an external account. Nil for none.
+	Identity *Identity
 }
 
 // SupabaseIdentity is a swegrowth.id account as Supabase vouches for it.
