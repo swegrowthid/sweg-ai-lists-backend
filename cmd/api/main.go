@@ -34,8 +34,8 @@ func main() {
 
 	log.Info("starting", "addr", cfg.Addr)
 	a := app.New(cfg, log, pool)
-	// News and tools refresh run beside the server: one sync now, then daily
-	// at midnight server time. Failures are logged, never fatal.
+	// News refreshes on a fixed 6-hour interval, tools on the daily midnight
+	// tick, both beside the server. Failures are logged, never fatal.
 	go a.RunNewsSync(ctx)
 	go a.RunToolsSync(ctx)
 	if err := a.Run(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -534,12 +534,12 @@ paths:
           description: Galat server
   /news:
     get:
-      summary: Daftar news - post AI Tools Digest dari zainfathoni.com
+      summary: Daftar news - agregat beberapa sumber feed AI
       operationId: listNews
       tags: [news]
       responses:
         "200":
-          description: Daftar news terbit terbaru dulu. Diisi sync harian, bukan lewat endpoint tulis.
+          description: Daftar news terbit terbaru dulu, agregasi dari sumber yang dikonfigurasi (feed RSS/Atom dan satu listing HTML). Diisi sync berkala, bukan lewat endpoint tulis.
           content:
             application/json:
               schema:
@@ -1387,7 +1387,11 @@ components:
         url:
           type: string
           format: uri
-          description: URL post asli di blog sumber. Kunci unik baris ini.
+          description: URL post asli di sumber. Kunci unik baris ini.
+        source:
+          type: string
+          description: Nama tampilan sumber feed baris ini (misalnya TechCrunch). Kosong untuk baris warisan.
+          example: "The Decoder"
         summary:
           type: string
           description: Ringkasan dari kartu listing sumber. Boleh string kosong.
@@ -1551,6 +1555,6 @@ tags:
   - name: wanted
     description: Daftar wanted publik untuk post, tanpa login.
   - name: news
-    description: News AI Tools Digest dari blog zainfathoni.com, diisi sync harian.
+    description: News AI dari beberapa sumber yang dikonfigurasi (feed RSS/Atom dan satu listing HTML), diisi sync berkala.
   - name: tools
     description: Katalog tools AI dari markdown repo tools-ai-swe-growth, diisi sync harian.

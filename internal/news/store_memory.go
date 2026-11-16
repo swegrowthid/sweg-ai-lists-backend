@@ -30,8 +30,9 @@ func (m *MemoryStore) Upsert(_ context.Context, input UpsertInput) (Entry, error
 		if existing.URL != input.URL {
 			continue
 		}
-		if existing.Title != input.Title || existing.Summary != input.Summary || !existing.PublishedAt.Equal(input.PublishedAt) {
+		if existing.Title != input.Title || existing.Source != input.Source || existing.Summary != input.Summary || !existing.PublishedAt.Equal(input.PublishedAt) {
 			existing.Title = input.Title
+			existing.Source = input.Source
 			existing.Summary = input.Summary
 			existing.PublishedAt = input.PublishedAt
 			existing.UpdatedAt = time.Now().UTC()
@@ -49,6 +50,7 @@ func (m *MemoryStore) Upsert(_ context.Context, input UpsertInput) (Entry, error
 		ID:          entryID,
 		Title:       input.Title,
 		URL:         input.URL,
+		Source:      input.Source,
 		Summary:     input.Summary,
 		PublishedAt: input.PublishedAt,
 		CreatedAt:   now,
