@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // twoFeedServer serves an RSS feed at /rss.xml and an Atom feed at /atom.xml.
@@ -114,6 +116,49 @@ func TestSyncIsolatesAnUnparseableSource(t *testing.T) {
 	}
 	if joined := errors.Join(nil); joined != nil {
 		t.Fatal("errors.Join(nil) is not nil")
+	}
+}
+
+func TestSyncCapsAFeedToItsNewestWindow(t *testing.T) {
+	items := make([]string, 0, 120)
+	for index := 0; index < 120; index++ {
+		when := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, index)
+		id := strconv.Itoa(index)
+		items = append(items, `<item><title>post `+id+`</title><link>/post-`+id+`</link><pubDate>`+when.Format(time.RFC1123Z)+`</pubDate></item>`)
+	}
+	// The empty Atom feed parses to zero entries, so the count below is the
+	// RSS feed's capped contribution alone.
+	server := twoFeedServer(t, rssFixture(items...), atomFixture())
+
+	store := NewMemoryStore()
+	svc := newServiceWithSource(store, []source{
+		{name: "Test RSS", kind: kindFeed, listingURL: server.URL + "/rss.xml", client: server.Client()},
+		{name: "Test Atom", kind: kindFeed, listingURL: server.URL + "/atom.xml", client: server.Client()},
+	})
+
+	stored, err := svc.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if stored != maxFeedItems {
+		t.Fatalf("Sync() stored = %d, want the cap %d", stored, maxFeedItems)
+	}
+
+	entries := listEntries(t, store)
+	if len(entries) != maxFeedItems {
+		t.Fatalf("len(entries) = %d, want the cap %d", len(entries), maxFeedItems)
+	}
+	// List is newest-first: the window kept posts 20..119.
+	if entries[0].Title != "post 119" {
+		t.Fatalf("entries[0] = %q, want the newest item post 119", entries[0].Title)
+	}
+	if entries[maxFeedItems-1].Title != "post 20" {
+		t.Fatalf("entries[%d] = %q, want the oldest kept item post 20", maxFeedItems-1, entries[maxFeedItems-1].Title)
+	}
+	for _, entry := range entries {
+		if entry.Title == "post 0" {
+			t.Fatal("the oldest item survived the cap")
+		}
 	}
 }
 

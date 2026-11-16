@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 )
 
@@ -30,6 +31,12 @@ const (
 	// kinds of source: an HTML listing or a syndication feed.
 	kindListing = "listing"
 	kindFeed    = "feed"
+
+	// maxFeedItems caps how many entries one feed may contribute per sync.
+	// Some official feeds ship their whole archive (openai.com/news/rss.xml
+	// carried 1393 items back to 2015); the digest is a news surface, so a
+	// feed only feeds its newest window.
+	maxFeedItems = 100
 )
 
 // Store is the persistence port. Service depends on it, never on SQL.
@@ -209,8 +216,22 @@ func (s *Service) fetchSource(ctx context.Context, src source) ([]Entry, error) 
 				PublishedAt: input.PublishedAt,
 			}
 		}
-		return entries, nil
+		return capNewest(entries, maxFeedItems), nil
 	default:
 		return nil, fmt.Errorf("news: unknown source kind %q", src.kind)
 	}
+}
+
+// capNewest keeps the newest n entries and drops the rest, deterministic
+// regardless of the order the feed listed them in.
+func capNewest(entries []Entry, n int) []Entry {
+	if len(entries) <= n {
+		return entries
+	}
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].PublishedAt.After(sorted[j].PublishedAt)
+	})
+	return sorted[:n]
 }
