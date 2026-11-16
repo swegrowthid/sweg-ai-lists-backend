@@ -229,7 +229,8 @@ func TestAppChangePasswordRevokesSessions(t *testing.T) {
 }
 
 // TestAppNewsRouteIsServed proves the news route rides the production graph.
-// With memory stores the list starts empty, so the endpoint answers [].
+// With memory stores the list starts empty, so the endpoint answers []. Every
+// row on the wire must carry the source key, even when it is empty.
 func TestAppNewsRouteIsServed(t *testing.T) {
 	handler := newTestApp(t).Handler()
 
@@ -238,7 +239,15 @@ func TestAppNewsRouteIsServed(t *testing.T) {
 		t.Fatalf("news status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
 	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
-		t.Fatalf("news body = %q, want an empty list", body)
+		var rows []map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &rows); err != nil {
+			t.Fatalf("decode news body: %v", err)
+		}
+		for index, row := range rows {
+			if _, ok := row["source"]; !ok {
+				t.Fatalf("news row %d misses the source key: %v", index, row)
+			}
+		}
 	}
 }
 

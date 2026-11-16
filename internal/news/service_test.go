@@ -28,7 +28,7 @@ func fixtureServer(t *testing.T) *httptest.Server {
 func newTestService(t *testing.T, server *httptest.Server) (*Service, *MemoryStore) {
 	t.Helper()
 	store := NewMemoryStore()
-	svc := newServiceWithSource(store, source{listingURL: server.URL + "/blog", client: server.Client()})
+	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
 	return svc, store
 }
 
@@ -44,14 +44,22 @@ func listEntries(t *testing.T, store *MemoryStore) []Entry {
 
 func TestNewServiceFillsSourceDefaults(t *testing.T) {
 	svc := NewService(NewMemoryStore())
-	if svc.source.listingURL != defaultListingURL {
-		t.Fatalf("listingURL = %q, want %q", svc.source.listingURL, defaultListingURL)
+	if len(svc.sources) != len(defaultSources()) {
+		t.Fatalf("len(sources) = %d, want %d", len(svc.sources), len(defaultSources()))
 	}
-	if svc.source.filter != defaultFilter {
-		t.Fatalf("filter = %q, want %q", svc.source.filter, defaultFilter)
+	for index, src := range svc.sources {
+		if src.name == "" || (src.kind != kindListing && src.kind != kindFeed) {
+			t.Fatalf("sources[%d] misses a name or kind: %+v", index, src)
+		}
+		if src.client == nil || src.client.Timeout != fetchTimeout {
+			t.Fatalf("sources[%d].client = nil or missing the fetch timeout", index)
+		}
 	}
-	if svc.source.client == nil || svc.source.client.Timeout != fetchTimeout {
-		t.Fatal("client = nil or missing the fetch timeout")
+	if svc.sources[len(svc.sources)-1].listingURL != defaultListingURL {
+		t.Fatalf("listing source URL = %q, want %q", svc.sources[len(svc.sources)-1].listingURL, defaultListingURL)
+	}
+	if svc.sources[len(svc.sources)-1].filter != defaultFilter {
+		t.Fatalf("listing filter = %q, want %q", svc.sources[len(svc.sources)-1].filter, defaultFilter)
 	}
 }
 
@@ -80,6 +88,9 @@ func TestSyncStoresFilteredEntriesNewestFirst(t *testing.T) {
 		t.Fatalf("entries[3].Title = %q, want the oldest digest", entries[3].Title)
 	}
 	for _, entry := range entries {
+		if entry.Source != "zainfathoni.com" {
+			t.Fatalf("entry %q Source = %q, want zainfathoni.com", entry.URL, entry.Source)
+		}
 		if entry.ID == "" || entry.CreatedAt.IsZero() || entry.UpdatedAt.IsZero() {
 			t.Fatalf("entry %q misses id or timestamps: %+v", entry.URL, entry)
 		}
@@ -145,7 +156,7 @@ func newSwitchService(t *testing.T, body string) (*Service, *MemoryStore, *switc
 	}))
 	t.Cleanup(server.Close)
 	store := NewMemoryStore()
-	svc := newServiceWithSource(store, source{listingURL: server.URL + "/blog", client: server.Client()})
+	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
 	return svc, store, page
 }
 

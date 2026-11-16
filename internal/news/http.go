@@ -24,7 +24,7 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 }
 
 // RegisterRoutes mounts the news endpoints on a stdlib mux. Reads are public:
-// the list is written by the daily sync, never by a client.
+// the list is written by the source sync, never by a client.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /news", h.list)
 }

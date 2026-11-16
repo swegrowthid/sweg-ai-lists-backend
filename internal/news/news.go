@@ -1,17 +1,17 @@
-// Package news serves the community news list: one row per AI Tools Digest
-// post from the zainfathoni.com blog. A scheduler syncs the list once at
-// startup and then every day at midnight server time.
+// Package news serves the community news list: AI news entries ingested from
+// several configured sources (RSS/Atom feeds plus one HTML listing). A
+// scheduler syncs the list once at startup and then every 6 hours.
 package news
 
 import "time"
 
-// Entry is one news row: a source blog post whose title matched the filter.
-// PublishedAt is the post date from the source, midnight UTC: the source
-// carries a calendar day, never a time of day.
+// Entry is one news row from a configured source. PublishedAt is the source
+// post date. Source carries the source's display name; legacy rows have "".
 type Entry struct {
 	ID          string    `json:"id"`
 	Title       string    `json:"title"`
 	URL         string    `json:"url"`
+	Source      string    `json:"source"`
 	Summary     string    `json:"summary"`
 	PublishedAt time.Time `json:"published_at"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -23,6 +23,7 @@ type Entry struct {
 type UpsertInput struct {
 	Title       string
 	URL         string
+	Source      string
 	Summary     string
 	PublishedAt time.Time
 }

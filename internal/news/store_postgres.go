@@ -26,19 +26,21 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 func (s *PostgresStore) Upsert(ctx context.Context, input UpsertInput) (Entry, error) {
 	var stored Entry
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO news (title, url, summary, published_at)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO news (title, url, source, summary, published_at)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (url) DO UPDATE SET
 			title = EXCLUDED.title,
+			source = EXCLUDED.source,
 			summary = EXCLUDED.summary,
 			published_at = EXCLUDED.published_at
-		WHERE (news.title, news.summary, news.published_at)
-		      IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.summary, EXCLUDED.published_at)
-		RETURNING id, title, url, summary, published_at, created_at, updated_at
-	`, input.Title, input.URL, input.Summary, input.PublishedAt).Scan(
+		WHERE (news.title, news.source, news.summary, news.published_at)
+		      IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.source, EXCLUDED.summary, EXCLUDED.published_at)
+		RETURNING id, title, url, source, summary, published_at, created_at, updated_at
+	`, input.Title, input.URL, input.Source, input.Summary, input.PublishedAt).Scan(
 		&stored.ID,
 		&stored.Title,
 		&stored.URL,
+		&stored.Source,
 		&stored.Summary,
 		&stored.PublishedAt,
 		&stored.CreatedAt,
@@ -59,13 +61,14 @@ func (s *PostgresStore) Upsert(ctx context.Context, input UpsertInput) (Entry, e
 func (s *PostgresStore) findByURL(ctx context.Context, entryURL string) (Entry, error) {
 	var stored Entry
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, title, url, summary, published_at, created_at, updated_at
+		SELECT id, title, url, source, summary, published_at, created_at, updated_at
 		FROM news
 		WHERE url = $1
 	`, entryURL).Scan(
 		&stored.ID,
 		&stored.Title,
 		&stored.URL,
+		&stored.Source,
 		&stored.Summary,
 		&stored.PublishedAt,
 		&stored.CreatedAt,
@@ -81,7 +84,7 @@ func (s *PostgresStore) findByURL(ctx context.Context, entryURL string) (Entry, 
 // List implements Store, newest published first, id as the tie-break.
 func (s *PostgresStore) List(ctx context.Context) ([]Entry, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, url, summary, published_at, created_at, updated_at
+		SELECT id, title, url, source, summary, published_at, created_at, updated_at
 		FROM news
 		ORDER BY published_at DESC, id
 	`)
@@ -97,6 +100,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]Entry, error) {
 			&stored.ID,
 			&stored.Title,
 			&stored.URL,
+			&stored.Source,
 			&stored.Summary,
 			&stored.PublishedAt,
 			&stored.CreatedAt,

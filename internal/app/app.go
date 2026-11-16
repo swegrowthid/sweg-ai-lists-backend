@@ -150,7 +150,7 @@ func New(cfg config.Config, log *slog.Logger, pool *db.Pool) *App {
 func (a *App) Handler() http.Handler { return a.handler }
 
 // RunNewsSync keeps the news list fresh until ctx ends: one sync now, then
-// every day at midnight server time. It blocks, so main starts it in its own
+// every 6 hours. It blocks, so main starts it in its own
 // goroutine and tests never touch the network.
 func (a *App) RunNewsSync(ctx context.Context) { a.newsScheduler.Run(ctx) }
 

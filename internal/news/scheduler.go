@@ -6,8 +6,12 @@ import (
 	"time"
 )
 
-// Scheduler keeps the news list fresh: one sync now, then every day at
-// midnight server time. It blocks, so main runs it in its own goroutine.
+// newsSyncInterval is how often the news list refreshes after the startup
+// sync.
+const newsSyncInterval = 6 * time.Hour
+
+// Scheduler keeps the news list fresh: one sync now, then every
+// newsSyncInterval. It blocks, so main runs it in its own goroutine.
 type Scheduler struct {
 	svc *Service
 	log *slog.Logger
@@ -24,12 +28,13 @@ func NewScheduler(svc *Service, log *slog.Logger) *Scheduler {
 	return &Scheduler{svc: svc, log: log}
 }
 
-// Run syncs once at startup and then on every local midnight until ctx ends.
-// A failed sync is logged, never fatal: the next run retries.
+// Run syncs once at startup and then on every newsSyncInterval tick until
+// ctx ends. A failed or partial sync is logged, never fatal: the next run
+// retries.
 func (s *Scheduler) Run(ctx context.Context) {
 	s.syncOnce(ctx)
 	for {
-		timer := time.NewTimer(time.Until(nextMidnight(time.Now())))
+		timer := time.NewTimer(time.Until(nextTick(time.Now())))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -44,14 +49,20 @@ func (s *Scheduler) Run(ctx context.Context) {
 func (s *Scheduler) syncOnce(ctx context.Context) {
 	stored, err := s.svc.Sync(ctx)
 	if err != nil {
-		s.log.Warn("news sync failed", "error", err)
+		s.log.Warn("news sync incomplete", "error", err, "stored", stored)
 		return
 	}
 	s.log.Info("news sync done", "stored", stored)
 }
 
-// nextMidnight returns the first local midnight strictly after now.
-func nextMidnight(now time.Time) time.Time {
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	return midnight.AddDate(0, 0, 1)
+// nextTick returns the first point on the fixed newsSyncInterval grid
+// strictly after now, measured from the Unix epoch so the interval is stable
+// across process restarts.
+func nextTick(now time.Time) time.Time {
+	next := now.Add(newsSyncInterval)
+	remainder := next.UnixNano() % int64(newsSyncInterval)
+	if remainder == 0 {
+		return next
+	}
+	return next.Add(-time.Duration(remainder))
 }
