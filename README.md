@@ -35,7 +35,7 @@ mux -> wanted.Handler -> wanted.Service -> wanted.Store + post.Service
 
 Nil pool jatuh ke memory store. Itu dipakai test dan `cmd/memserver`.
 Middleware: log, lalu CORS, lalu route. Tulis butuh Bearer token.
-Sync news dan tools jalan di goroutine sendiri: sekali saat start, lalu tiap 00:00 waktu server.
+Sync news jalan di goroutine sendiri: sekali saat start, lalu tiap 6 jam. Sync tools jalan sekali saat start, lalu tiap 00:00 waktu server.
 
 ## Struktur
 
@@ -47,7 +47,7 @@ internal/app       wiring graf
 internal/user      register + list user
 internal/auth      login, refresh, logout, middleware JWT
 internal/post      categories + posts
-internal/news      AI Tools Digest dari blog zainfathoni.com
+internal/news      ingest multi-sumber berita AI (feed RSS/Atom + listing blog)
 internal/tools     katalog tools AI dari markdown tools-ai-swe-growth
 internal/wanted    daftar wanted publik untuk post, tanpa login
 internal/health    liveness + readiness
@@ -182,7 +182,7 @@ Hal lain yang menjaga email tetap di inbox:
 | `GET` | `/wanted` | tidak | Daftar post wanted, tanpa items, terbaru ditandai dulu. |
 | `POST` | `/wanted` | tidak | Tandai post wanted. Duplikat idempotent jawab 200. |
 | `DELETE` | `/wanted/{slug}` | tidak | Hapus post dari wanted. Jawab 204. |
-| `GET` | `/news` | tidak | Daftar news AI Tools Digest, terbit terbaru dulu. |
+| `GET` | `/news` | tidak | Daftar news AI dari beberapa sumber yang dikonfigurasi, terbit terbaru dulu. Tiap baris bawa `source`. |
 | `GET` | `/tools` | tidak (Bearer opsional untuk `voted`) | Daftar tools AI urut katalog. Tiap item bawa `votes` + `voted` (`false` untuk anonim). Filter `?category=` dan `?q=` (nama, situs, status, min spend, fitur AI). Sort `?sort=votes` default `desc`. |
 | `GET` | `/tools/categories` | tidak | Mapping kategori tools: slug, prefix, file sumber, count. |
 | `GET` | `/tools/{id}` | tidak (Bearer opsional untuk `voted`) | Detail satu tool, id `P-001`, `CA-018`, `ADE-012`. Bawa `votes` + `voted`. |
@@ -229,16 +229,31 @@ Tiga teks 400 menunjuk lapisan gagal:
 
 ## News
 
-`GET /news` menyajikan daftar post "AI Tools Digest" dari blog
-`https://www.zainfathoni.com/blog`. Tabel `news` menyimpan satu baris per post,
-kuncinya `url` unik, jadi sync ulang tidak pernah menggandakan baris.
+`GET /news` menyajikan daftar berita AI dari beberapa sumber yang
+dikonfigurasi: feed RSS/Atom (TechCrunch, The Verge, The Decoder, Ars
+Technica, MarkTechPost, OpenAI, Google DeepMind, Hugging Face, MIT Tech
+Review, TLDR AI) plus listing blog `https://www.zainfathoni.com/blog` dengan
+filter "AI Tools Digest". Tabel `news` menyimpan satu baris per item, kuncinya
+`url` unik, jadi sync ulang tidak pernah menggandakan baris. Tiap baris bawa
+kolom `source` (nama tampilan sumbernya; migrasi 00015) dan `group` (lens:
+`lab`, `press`, `research`, `digest`) yang diturunkan dari registry saat baca.
 
-Sync jalan di dalam proses API: sekali saat start, lalu tiap hari pukul 00:00
-waktu server. Endpoint tidak pernah memanggil blog. Kalau sync gagal, hasil
-terakhir tetap tersaji dan run berikutnya mencoba lagi.
+Sync jalan di dalam proses API: sekali saat start, lalu tiap 6 jam. Sumber
+terisolasi: kegagalan satu sumber tidak menghentikan sumber lain, dan run
+berikutnya mencoba lagi. Endpoint tidak pernah memanggil sumber.
 
-- Filter: judul kartu listing memuat "AI Tools Digest", tanpa peduli besar-kecil huruf.
-- `published_at` = tengah malam UTC tanggal terbit di kartu listing.
+- `GET /news` menerima `q` (substring case-insensitive pada title, summary,
+  source), `group`, `source`, `page`, dan `per_page` (default 30, maks 100).
+  Jawabannya `{ data, meta }` dengan `meta` ala `PageMeta`; urutan stabil
+  `published_at DESC, id`. `source` di luar registry menjawab halaman kosong.
+- `GET /news/sources` menjawab registry lengkap: nama, group, dan `count`
+  baris tersimpan per sumber.
+- Filter listing: judul kartu memuat "AI Tools Digest", tanpa peduli
+  besar-kecil huruf.
+- `published_at` = waktu terbit sumber (pubDate RSS, published/updated Atom,
+  atau tanggal kartu listing), UTC.
+- Ringkasan sumber dipotong maksimal 1000 rune, bukan membuang barisnya.
+  Parameter tracking (`utm_*`, `fbclid`, dll) distrip dari URL sebelum simpan.
 - Daftar urut terbit terbaru dulu; `summary` boleh string kosong.
 - Sumber atau filter berubah = ubah `internal/news/service.go`, bukan skema.
 
@@ -352,6 +367,7 @@ Goose melacak versi di `goose_db_version`. Migrasi lama tidak boleh ditulis ulan
 | `00012_post_items_value.sql` | `post_items` jadi satu kolom `value`. Backfill dari `body_text`/`url`, kolom kind lama dihapus. |
 | `00013_users_supabase_id.sql` | Kolom `users.supabase_id` unik: akun swegrowth.id yang dipakai user lokal. |
 | `00014_user_identities.sql` | Tabel `user_identities` untuk akun eksternal yang tertaut. Isi dari `supabase_id`, lalu kolom itu dihapus. |
+| `00015_news_source.sql` | Kolom `news.source` + backfill baris lama ke `zainfathoni.com` + index `(source, published_at DESC, id)`. |
 
 Jangan pakai pooler transaksi port 6543 untuk migrasi. Pakai port 5432. Lihat panduan deploy.
 
@@ -377,6 +393,6 @@ Lihat `deploy/README.md`. Ringkas alur:
 
 Migrasi gagal = API lama tetap jalan. Secrets GitHub: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` wajib. `DEPLOY_PORT`, `DEPLOY_PATH` opsional.
 
-Sync news dan tools jalan di dalam biner API, tanpa unit systemd tambahan: sekali saat start lalu tiap 00:00 waktu server.
+Sync news dan tools jalan di dalam biner API, tanpa unit systemd tambahan. News: sekali saat start lalu tiap 6 jam. Tools: sekali saat start lalu tiap 00:00 waktu server.
 
 CI jalan di tiap push dan PR: vet, test, build linux. Job deploy hanya push `main`.

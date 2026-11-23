@@ -8,38 +8,37 @@ import (
 	"time"
 )
 
-func TestNextMidnight(t *testing.T) {
-	zone := time.FixedZone("test", 7*60*60)
+func TestNextTick(t *testing.T) {
+	epochGrid := time.Unix(0, 0).UTC().Add(3 * newsSyncInterval)
 	cases := []struct {
 		name string
 		now  time.Time
 		want time.Time
 	}{
 		{
-			"midday",
-			time.Date(2026, 9, 30, 10, 0, 0, 0, zone),
-			time.Date(2026, 10, 1, 0, 0, 0, 0, zone),
+			"just after a grid point",
+			epochGrid.Add(time.Minute),
+			epochGrid.Add(newsSyncInterval),
 		},
 		{
-			"one minute before midnight",
-			time.Date(2026, 9, 30, 23, 59, 0, 0, zone),
-			time.Date(2026, 10, 1, 0, 0, 0, 0, zone),
+			"exactly on a grid point",
+			epochGrid,
+			epochGrid.Add(newsSyncInterval),
 		},
 		{
-			"exactly midnight",
-			time.Date(2026, 9, 30, 0, 0, 0, 0, zone),
-			time.Date(2026, 10, 1, 0, 0, 0, 0, zone),
-		},
-		{
-			"end of year",
-			time.Date(2026, 12, 31, 12, 0, 0, 0, zone),
-			time.Date(2027, 1, 1, 0, 0, 0, 0, zone),
+			"one nanosecond before a grid point",
+			epochGrid.Add(-time.Nanosecond),
+			epochGrid,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := nextMidnight(tc.now); !got.Equal(tc.want) {
-				t.Fatalf("nextMidnight(%v) = %v, want %v", tc.now, got, tc.want)
+			got := nextTick(tc.now)
+			if !got.Equal(tc.want) {
+				t.Fatalf("nextTick(%v) = %v, want %v", tc.now, got, tc.want)
+			}
+			if got := got.Sub(tc.now); got <= 0 || got > newsSyncInterval {
+				t.Fatalf("nextTick(%v) is %v away, want (0, %v]", tc.now, got, newsSyncInterval)
 			}
 		})
 	}
@@ -57,7 +56,7 @@ func TestSchedulerRunSyncsAtStartupAndStopsWithContext(t *testing.T) {
 		close(done)
 	}()
 
-	// Run must fill the store before its first midnight.
+	// Run must fill the store before its first interval tick.
 	deadline := time.Now().Add(5 * time.Second)
 	for len(listEntries(t, store)) != 4 {
 		if time.Now().After(deadline) {

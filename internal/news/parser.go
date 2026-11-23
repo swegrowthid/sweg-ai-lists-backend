@@ -76,10 +76,10 @@ func parseArticle(article *html.Node, base *url.URL) (Entry, bool) {
 	summary := ""
 	if paragraph := findFirst(article, elementNamed("p")); paragraph != nil {
 		text := strings.TrimSpace(textContent(paragraph))
-		if utf8.RuneCountInString(text) > maxSummaryLen || strings.ContainsRune(text, 0) {
+		if strings.ContainsRune(text, 0) {
 			return Entry{}, false
 		}
-		summary = text
+		summary = truncateSummary(text, maxSummaryLen)
 	}
 	return Entry{
 		Title:       title,
@@ -91,6 +91,8 @@ func parseArticle(article *html.Node, base *url.URL) (Entry, bool) {
 
 // resolveLink turns one card href into an absolute http(s) URL under the
 // listing base, or reports false when the value is not a usable link.
+// Tracking parameters are stripped so the stored URL stays clean and two
+// feeds linking the same article dedupe on one key.
 func resolveLink(href string, base *url.URL) (string, bool) {
 	if strings.TrimSpace(href) == "" || strings.ContainsRune(href, 0) {
 		return "", false
@@ -103,11 +105,61 @@ func resolveLink(href string, base *url.URL) (string, bool) {
 	if (absolute.Scheme != "http" && absolute.Scheme != "https") || absolute.Host == "" {
 		return "", false
 	}
+	stripTrackingParams(absolute)
 	link := absolute.String()
 	if utf8.RuneCountInString(link) > maxURLLen {
 		return "", false
 	}
 	return link, true
+}
+
+// trackingParams are query keys analytics and share buttons append. utm_*
+// is handled by prefix so new campaign names never need a code change.
+var trackingParams = map[string]bool{
+	"fbclid": true, "gclid": true, "dclid": true, "msclkid": true, "twclid": true,
+	"mc_cid": true, "mc_eid": true, "igshid": true, "spm": true,
+	"guccounter": true, "guce_referrer": true, "guce_referrer_sig": true,
+	"_hsenc": true, "_hsmi": true, "vero_id": true, "wickedid": true,
+	"li_fat_id": true, "s_kwcid": true, "ef_id": true,
+}
+
+// stripTrackingParams removes analytics/share query keys in place. When no
+// key matches, RawQuery stays byte-identical.
+func stripTrackingParams(u *url.URL) {
+	query := u.Query()
+	changed := false
+	for key := range query {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "utm_") || trackingParams[lower] {
+			query.Del(key)
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = query.Encode()
+	}
+}
+
+// truncateSummary caps s at maxRunes runes, cutting at the last word
+// boundary when one exists in the back half of the window, and appends "..."
+// when anything was removed. It never splits a word or a UTF-8 sequence.
+func truncateSummary(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	cut := maxRunes - 3 // room for the ellipsis
+	if cut < 1 {
+		cut = maxRunes
+	}
+	end := cut
+	for end > 0 && runes[end-1] != ' ' && runes[end-1] != '\n' && runes[end-1] != '\t' {
+		end--
+	}
+	if end < cut/2 {
+		end = cut // one long token: hard cut beats an absurdly short summary
+	}
+	return strings.TrimRight(string(runes[:end]), " \t\n") + "..."
 }
 
 // elementNamed matches one element node by tag name.
