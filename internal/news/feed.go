@@ -111,13 +111,15 @@ type atomLink struct {
 	Href string `xml:"href,attr"`
 }
 
-// atomEntry mirrors one Atom <entry>.
+// atomEntry mirrors one Atom <entry>. Published is the original post date;
+// Updated moves on every edit, so it is only the fallback.
 type atomEntry struct {
-	Title   string     `xml:"title"`
-	Updated string     `xml:"updated"`
-	Summary string     `xml:"summary"`
-	Content string     `xml:"content"`
-	Links   []atomLink `xml:"link"`
+	Title     string     `xml:"title"`
+	Published string     `xml:"published"`
+	Updated   string     `xml:"updated"`
+	Summary   string     `xml:"summary"`
+	Content   string     `xml:"content"`
+	Links     []atomLink `xml:"link"`
 }
 
 // atomEnvelope mirrors the Atom envelope.
@@ -134,7 +136,8 @@ func parseAtomFeed(r io.Reader, base *url.URL) ([]UpsertInput, error) {
 	}
 	inputs := []UpsertInput{}
 	for _, entry := range envelope.Entries {
-		publishedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(entry.Updated))
+		stamp := firstNonEmpty(entry.Published, entry.Updated)
+		publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(stamp))
 		if err != nil {
 			continue
 		}
@@ -175,9 +178,10 @@ func feedUpsertInput(title, rawLink, summary string, publishedAt time.Time, base
 		return UpsertInput{}, false
 	}
 	summary = strings.TrimSpace(html.UnescapeString(summary))
-	if utf8.RuneCountInString(summary) > maxSummaryLen || strings.ContainsRune(summary, 0) {
+	if strings.ContainsRune(summary, 0) {
 		return UpsertInput{}, false
 	}
+	summary = truncateSummary(summary, maxSummaryLen)
 	return UpsertInput{
 		Title:       title,
 		URL:         link,

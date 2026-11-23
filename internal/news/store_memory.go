@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,19 +61,79 @@ func (m *MemoryStore) Upsert(_ context.Context, input UpsertInput) (Entry, error
 	return created, nil
 }
 
-// List implements Store, newest published first, id as the tie-break. Same
-// order as the Postgres store.
-func (m *MemoryStore) List(_ context.Context) ([]Entry, error) {
+// ListPage implements Store with the same filter, order, and paging rules as
+// the Postgres store. PerPage <= 0 returns every match.
+func (m *MemoryStore) ListPage(_ context.Context, filter StoreFilter) ([]Entry, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	out := make([]Entry, len(m.entries))
-	copy(out, m.entries)
-	sort.SliceStable(out, func(i, j int) bool {
-		if !out[i].PublishedAt.Equal(out[j].PublishedAt) {
-			return out[i].PublishedAt.After(out[j].PublishedAt)
+	query := strings.ToLower(filter.Query)
+	sourceSet := map[string]bool{}
+	for _, name := range filter.Sources {
+		sourceSet[name] = true
+	}
+
+	matched := []Entry{}
+	for _, entry := range m.entries {
+		source := entry.Source
+		if source == "" {
+			source = legacySource
 		}
-		return out[i].ID < out[j].ID
+		if query != "" &&
+			!strings.Contains(strings.ToLower(entry.Title), query) &&
+			!strings.Contains(strings.ToLower(entry.Summary), query) &&
+			!strings.Contains(strings.ToLower(source), query) {
+			continue
+		}
+		if len(sourceSet) > 0 && !sourceSet[source] {
+			continue
+		}
+		entry.Source = source
+		matched = append(matched, entry)
+	}
+	sortEntries(matched)
+
+	total := len(matched)
+	if filter.PerPage <= 0 {
+		return matched, total, nil
+	}
+	offset := 0
+	if filter.Page > 1 {
+		offset = (filter.Page - 1) * filter.PerPage
+	}
+	if offset >= total {
+		return []Entry{}, total, nil
+	}
+	end := offset + filter.PerPage
+	if end > total {
+		end = total
+	}
+	return matched[offset:end], total, nil
+}
+
+// SourceCounts implements Store: one count per normalized source name.
+func (m *MemoryStore) SourceCounts(_ context.Context) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	counts := map[string]int{}
+	for _, entry := range m.entries {
+		source := entry.Source
+		if source == "" {
+			source = legacySource
+		}
+		counts[source]++
+	}
+	return counts, nil
+}
+
+// sortEntries orders newest published first, id as the tie-break. Same
+// order as the Postgres store.
+func sortEntries(entries []Entry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].PublishedAt.Equal(entries[j].PublishedAt) {
+			return entries[i].PublishedAt.After(entries[j].PublishedAt)
+		}
+		return entries[i].ID < entries[j].ID
 	})
-	return out, nil
 }

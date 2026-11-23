@@ -96,6 +96,63 @@ func TestParseFeedAtom(t *testing.T) {
 	}
 }
 
+func TestParseFeedAtomPrefersPublishedOverUpdated(t *testing.T) {
+	body := atomFixture(
+		`<entry><title>Edited post</title><link href="https://example.com/edited"/><published>2026-01-02T10:00:00Z</published><updated>2026-02-20T10:00:00Z</updated></entry>`,
+		`<entry><title>Updated only</title><link href="https://example.com/updated"/><updated>2026-01-03T10:00:00Z</updated></entry>`,
+	)
+	base := mustParseURL(t, "https://example.com/atom.xml")
+	entries, err := parseFeed(strings.NewReader(body), base)
+	if err != nil {
+		t.Fatalf("parseFeed() error = %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2", len(entries))
+	}
+	// An edit bumps <updated>; <published> keeps the original post date.
+	if want := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC); !entries[0].PublishedAt.Equal(want) {
+		t.Fatalf("entries[0].PublishedAt = %v, want published %v not updated", entries[0].PublishedAt, want)
+	}
+	if want := time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC); !entries[1].PublishedAt.Equal(want) {
+		t.Fatalf("entries[1].PublishedAt = %v, want the updated fallback %v", entries[1].PublishedAt, want)
+	}
+}
+
+func TestParseFeedStripsTrackingParams(t *testing.T) {
+	body := rssFixture(
+		`<item><title>Tracked</title><link>https://example.com/post?utm_source=newsletter&amp;utm_medium=email&amp;id=42&amp;fbclid=abc</link>` + pubDate + `<description>x</description></item>`,
+	)
+	base := mustParseURL(t, "https://example.com/feed.xml")
+	entries, err := parseFeed(strings.NewReader(body), base)
+	if err != nil {
+		t.Fatalf("parseFeed() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+	if entries[0].URL != "https://example.com/post?id=42" {
+		t.Fatalf("entries[0].URL = %q, want tracking params stripped and id kept", entries[0].URL)
+	}
+}
+
+func TestTruncateSummaryCutsAtWordBoundary(t *testing.T) {
+	text := strings.Repeat("word ", 300) // 1500 runes, spaces every 5
+	got := truncateSummary(text, 100)
+	if len([]rune(got)) > 100 {
+		t.Fatalf("len = %d runes, want <= 100", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("summary = %q, want ellipsis tail", got[len(got)-10:])
+	}
+	if strings.HasSuffix(strings.TrimSuffix(got, "..."), "wor") {
+		t.Fatal("summary cut mid-word")
+	}
+	// Short text passes through untouched.
+	if truncateSummary("short", 100) != "short" {
+		t.Fatal("truncateSummary changed a short string")
+	}
+}
+
 func TestParseFeedSkipsBrokenItems(t *testing.T) {
 	body := rssFixture(
 		`<item><title>Missing link</title><pubDate>Mon, 02 Jan 2006 15:04:05 -0700</pubDate><description>x</description></item>`,
@@ -121,9 +178,8 @@ func TestParseFeedCaps(t *testing.T) {
 	longURL := `<item><title>Ok</title><link>https://example.com/` + strings.Repeat("u", 490) + `-way-over</link>` + pubDate + `</item>`
 
 	for name, body := range map[string]string{
-		"301-rune title":    rssFixture(longTitle),
-		"1001-rune summary": rssFixture(longSummary),
-		"501-rune url":      rssFixture(longURL),
+		"301-rune title": rssFixture(longTitle),
+		"501-rune url":   rssFixture(longURL),
 	} {
 		t.Run(name, func(t *testing.T) {
 			entries, err := parseFeed(strings.NewReader(body), base)
@@ -134,6 +190,21 @@ func TestParseFeedCaps(t *testing.T) {
 				t.Fatalf("entries = %+v, want none", entries)
 			}
 		})
+	}
+
+	// A long summary truncates instead of dropping the whole item.
+	entries, err := parseFeed(strings.NewReader(rssFixture(longSummary)), base)
+	if err != nil {
+		t.Fatalf("parseFeed() error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want the truncated item kept", len(entries))
+	}
+	if got := len([]rune(entries[0].Summary)); got > maxSummaryLen {
+		t.Fatalf("summary runes = %d, want <= %d", got, maxSummaryLen)
+	}
+	if !strings.HasSuffix(entries[0].Summary, "...") {
+		t.Fatalf("summary = %q, want a truncated tail", entries[0].Summary[len(entries[0].Summary)-10:])
 	}
 }
 

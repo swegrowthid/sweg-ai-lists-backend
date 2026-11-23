@@ -229,8 +229,8 @@ func TestAppChangePasswordRevokesSessions(t *testing.T) {
 }
 
 // TestAppNewsRouteIsServed proves the news route rides the production graph.
-// With memory stores the list starts empty, so the endpoint answers []. Every
-// row on the wire must carry the source key, even when it is empty.
+// With memory stores the list starts empty, so the endpoint answers an empty
+// page. Every row on the wire must carry the source and group keys.
 func TestAppNewsRouteIsServed(t *testing.T) {
 	handler := newTestApp(t).Handler()
 
@@ -238,16 +238,27 @@ func TestAppNewsRouteIsServed(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("news status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
-	if body := strings.TrimSpace(res.Body.String()); body != "[]" {
-		var rows []map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(body), &rows); err != nil {
-			t.Fatalf("decode news body: %v", err)
+	var page struct {
+		Data []map[string]json.RawMessage `json:"data"`
+		Meta struct {
+			Total int `json:"total"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode news body: %v", err)
+	}
+	for index, row := range page.Data {
+		if _, ok := row["source"]; !ok {
+			t.Fatalf("news row %d misses the source key: %v", index, row)
 		}
-		for index, row := range rows {
-			if _, ok := row["source"]; !ok {
-				t.Fatalf("news row %d misses the source key: %v", index, row)
-			}
+		if _, ok := row["group"]; !ok {
+			t.Fatalf("news row %d misses the group key: %v", index, row)
 		}
+	}
+
+	res = doJSON(t, handler, http.MethodGet, "/news/sources", "", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("news sources status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
 }
 

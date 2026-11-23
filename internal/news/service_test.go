@@ -28,16 +28,17 @@ func fixtureServer(t *testing.T) *httptest.Server {
 func newTestService(t *testing.T, server *httptest.Server) (*Service, *MemoryStore) {
 	t.Helper()
 	store := NewMemoryStore()
-	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
+	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", group: GroupDigest, kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
 	return svc, store
 }
 
-// listEntries reads the store, failing the test on any error.
+// listEntries reads every stored entry through ListPage, failing the test on
+// any error.
 func listEntries(t *testing.T, store *MemoryStore) []Entry {
 	t.Helper()
-	entries, err := store.List(context.Background())
+	entries, _, err := store.ListPage(context.Background(), StoreFilter{})
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("ListPage() error = %v", err)
 	}
 	return entries
 }
@@ -156,7 +157,7 @@ func newSwitchService(t *testing.T, body string) (*Service, *MemoryStore, *switc
 	}))
 	t.Cleanup(server.Close)
 	store := NewMemoryStore()
-	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
+	svc := newServiceWithSource(store, []source{{name: "zainfathoni.com", group: GroupDigest, kind: kindListing, listingURL: server.URL + "/blog", client: server.Client()}})
 	return svc, store, page
 }
 

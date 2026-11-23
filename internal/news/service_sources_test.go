@@ -182,14 +182,13 @@ func TestNewsJSONCarriesSource(t *testing.T) {
 		t.Fatalf("GET /news status = %d, want 200", recorder.Code)
 	}
 
-	var rows []map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &rows); err != nil {
+	var result ListResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode /news: %v", err)
 	}
 	sources := map[string]bool{}
-	for _, row := range rows {
-		name, _ := row["source"].(string)
-		sources[name] = true
+	for _, row := range result.Data {
+		sources[row.Source] = true
 	}
 	if !sources["Test RSS"] || !sources["Test Atom"] {
 		t.Fatalf("rows carry %v, want both source names", sources)

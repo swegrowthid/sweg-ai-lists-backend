@@ -534,18 +534,98 @@ paths:
           description: Galat server
   /news:
     get:
-      summary: Daftar news - agregat beberapa sumber feed AI
+      summary: Daftar news - agregat beberapa sumber feed AI, dengan filter dan paging
       operationId: listNews
+      tags: [news]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Pencarian substring case-insensitive atas title, summary, dan source.
+            Karakter `%`, `_`, dan `\` diperlakukan literal.
+          schema:
+            type: string
+          example: openai
+        - name: group
+          in: query
+          required: false
+          description: >-
+            Filter lens/group sumber. `lab` = lab riset (OpenAI, DeepMind, Hugging Face),
+            `press` = media (TechCrunch, The Verge, The Decoder, Ars Technica),
+            `research` = paper/riset (MarkTechPost, MIT Tech Review),
+            `digest` = kurasi (TLDR AI, zainfathoni.com).
+          schema:
+            type: string
+            enum: [lab, press, research, digest]
+          example: lab
+        - name: source
+          in: query
+          required: false
+          description: >-
+            Filter satu nama sumber persis (case-insensitive, misalnya `OpenAI`).
+            Nama di luar registry menghasilkan halaman kosong, bukan error.
+            Bila `group` juga diisi, source harus anggota group itu.
+          schema:
+            type: string
+          example: OpenAI
+        - name: page
+          in: query
+          required: false
+          description: Nomor halaman, mulai dari 1.
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 2
+        - name: per_page
+          in: query
+          required: false
+          description: Jumlah baris per halaman. Default 30, maksimum 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+          example: 30
+      responses:
+        "200":
+          description: >-
+            Satu halaman news terbaru dulu plus meta paging. `meta.total` menghitung
+            seluruh baris yang cocok dengan filter. Diisi sync berkala, bukan lewat
+            endpoint tulis. Urutan `published_at DESC, id` stabil antar halaman.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsList"
+        "400":
+          description: >-
+            Parameter tidak valid. Contoh: page/per_page bukan integer atau di luar
+            batas, per_page di atas 100, group di luar enum, atau q/group/source
+            memuat byte NUL.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Galat server
+  /news/sources:
+    get:
+      summary: Daftar sumber news terdaftar beserta jumlah baris tersimpan
+      operationId: listNewsSources
       tags: [news]
       responses:
         "200":
-          description: Daftar news terbit terbaru dulu, agregasi dari sumber yang dikonfigurasi (feed RSS/Atom dan satu listing HTML). Diisi sync berkala, bukan lewat endpoint tulis.
+          description: >-
+            Semua sumber di registry, urut seperti konfigurasi sync, masing-masing
+            dengan lens group dan jumlah baris di store. Sumber tanpa baris tetap
+            muncul dengan count 0 supaya filter UI lengkap.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/NewsEntry"
+                  $ref: "#/components/schemas/NewsSource"
         "500":
           description: Galat server
   /tools:
@@ -1376,7 +1456,7 @@ components:
           example: "# Setup\n\nInstall the CLI."
     NewsEntry:
       type: object
-      required: [id, title, url, summary, published_at, created_at, updated_at]
+      required: [id, title, url, source, group, summary, published_at, created_at, updated_at]
       properties:
         id:
           type: string
@@ -1387,24 +1467,58 @@ components:
         url:
           type: string
           format: uri
-          description: URL post asli di sumber. Kunci unik baris ini.
+          description: URL post asli di sumber, sudah bersih dari parameter tracking. Kunci unik baris ini.
         source:
           type: string
-          description: Nama tampilan sumber feed baris ini (misalnya TechCrunch). Kosong untuk baris warisan.
+          description: Nama tampilan sumber feed baris ini (misalnya TechCrunch). Baris warisan dinormalisasi ke zainfathoni.com.
           example: "The Decoder"
+        group:
+          type: string
+          description: Lens group sumber ini, diturunkan dari registry saat baca.
+          enum: [lab, press, research, digest]
+          example: "press"
         summary:
           type: string
-          description: Ringkasan dari kartu listing sumber. Boleh string kosong.
+          description: Ringkasan dari sumber, maksimal 1000 rune dengan ellipsis. Boleh string kosong.
         published_at:
           type: string
           format: date-time
-          description: Tengah malam UTC dari tanggal terbit kartu sumber.
+          description: Waktu terbit dari sumber (pubDate RSS, published/updated Atom, atau tanggal kartu listing), UTC.
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    NewsList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          description: Baris news pada halaman ini, urut published_at terbaru dulu.
+          items:
+            $ref: "#/components/schemas/NewsEntry"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    NewsSource:
+      type: object
+      required: [name, group, count]
+      properties:
+        name:
+          type: string
+          description: Nama tampilan sumber, sama dengan nilai filter `source`.
+          example: "Hugging Face"
+        group:
+          type: string
+          description: Lens group sumber ini.
+          enum: [lab, press, research, digest]
+          example: "lab"
+        count:
+          type: integer
+          minimum: 0
+          description: Jumlah baris tersimpan dari sumber ini.
+          example: 42
     ToolCategory:
       type: object
       required: [slug, name, prefix, source_file, source_url, count]
